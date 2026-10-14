@@ -2,6 +2,8 @@
 
 An interactive, responsive static map application built with **OpenStreetMap** (via Leaflet) that visualizes the City of Calgary's on-street parking zones, rates, street shapes, and parking restrictions using the Calgary Parking Authority ArcGIS FeatureServer API.
 
+🌐 **Live Demo (GitHub Pages):** [https://icecore2.github.io/yyc-parking.github.io/](https://icecore2.github.io/yyc-parking.github.io/)
+
 ---
 
 ## 🌟 Key Features
