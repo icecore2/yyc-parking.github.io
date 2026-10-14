@@ -1,0 +1,19 @@
+{
+  "name": "calgary-parking-map",
+  "version": "1.0.0",
+  "description": "Interactive static OpenStreetMap showing Calgary On-Street Parking Zones, rates, shapes, and details",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "calgary",
+    "parking",
+    "leaflet",
+    "openstreetmap",
+    "arcgis"
+  ],
+  "author": "",
+  "license": "MIT"
+}

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calgary On-Street Parking Map</title>
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  
+  <!-- Leaflet MarkerCluster CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+  
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">P</div>
+      <div class="brand-titles">
+        <h1>Calgary Parking Map</h1>
+        <span>On-Street Parking Zones &amp; Live Rates</span>
+      </div>
+    </div>
+
+    <!-- Middle Controls: Search & Area Filter -->
+    <div class="header-search-bar">
+      <div class="search-input-wrapper">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="search-input" class="search-input" placeholder="Search zone # or street (e.g. 1008, Eau Claire)..." autocomplete="off">
+        <button id="search-clear-btn" class="search-clear-btn" title="Clear search">&times;</button>
+      </div>
+
+      <select id="brz-filter" class="select-filter" title="Filter by Area (BRZ)">
+        <option value="ALL">All Areas (BRZs)</option>
+      </select>
+    </div>
+
+    <!-- Header Actions -->
+    <div class="header-actions">
+      <!-- Get Latest Information Button -->
+      <button id="refresh-btn" class="btn btn-primary" title="Fetch latest data from Calgary Parking Authority">
+        <svg id="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M23 4v6h-6"></path>
+          <path d="M1 20v-6h6"></path>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
+        <span>Get Latest Information</span>
+      </button>
+
+      <!-- API Settings Modal Button -->
+      <button id="settings-btn" class="btn btn-secondary btn-icon-only" title="API Configuration">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Map Container -->
+  <main class="app-main">
+    <div id="map"></div>
+
+    <!-- Status & Count Overlay -->
+    <div class="map-status-overlay">
+      <div class="status-chip">
+        <span id="status-dot" class="status-dot loading"></span>
+        <span id="status-text">Connecting to Calgary Parking Authority...</span>
+      </div>
+      <div class="status-chip" style="font-weight: 700;">
+        <span id="zone-count">0 parking zones</span>
+      </div>
+    </div>
+
+    <!-- Floating Layer Controls -->
+    <div class="map-floating-tools">
+      <label class="tool-checkbox">
+        <input type="checkbox" id="toggle-pins" checked>
+        <span>Pins</span>
+      </label>
+      <label class="tool-checkbox">
+        <input type="checkbox" id="toggle-shapes" checked>
+        <span>Shapes</span>
+      </label>
+      <label class="tool-checkbox">
+        <input type="checkbox" id="toggle-cluster" checked>
+        <span>Cluster Pins</span>
+      </label>
+    </div>
+
+    <!-- Legend -->
+    <div class="map-legend">
+      <div class="legend-title">Price Zone Legend</div>
+      <div class="legend-item"><span class="legend-line" style="background:#3b82f6;"></span> Zones 1 - 2</div>
+      <div class="legend-item"><span class="legend-line" style="background:#06b6d4;"></span> Zones 3 - 4</div>
+      <div class="legend-item"><span class="legend-line" style="background:#10b981;"></span> Zones 5 - 6</div>
+      <div class="legend-item"><span class="legend-line" style="background:#f59e0b;"></span> Zones 7 - 9</div>
+      <div class="legend-item"><span class="legend-line" style="background:#8b5cf6;"></span> Zones 10 - 12</div>
+    </div>
+
+    <!-- Slide-Out Details Sidebar -->
+    <aside id="details-sidebar" class="details-sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title-group">
+          <span id="sidebar-zone-num" class="zone-badge-lg">Zone #---</span>
+          <div>
+            <h2 id="sidebar-street">Select a Zone</h2>
+          </div>
+        </div>
+        <button id="sidebar-close-btn" class="sidebar-close-btn" title="Close Panel">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div id="sidebar-content" class="sidebar-content">
+        <div class="sidebar-empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+            <circle cx="12" cy="10" r="3"></circle>
+          </svg>
+          <p>Click on any parking pin or street shape to inspect complete rates, limits, and capacity.</p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- API URL Settings Modal -->
+  <div id="settings-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>ArcGIS API Configuration</h3>
+        <button id="settings-close-btn" class="sidebar-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="api-url-input">ArcGIS FeatureServer Query URL</label>
+          <textarea id="api-url-input"></textarea>
+          <p class="form-help">Default: Calgary Parking Authority On-Street Parking Zones with Rates FeatureServer</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="settings-reset-btn" class="btn btn-secondary">Reset to Default</button>
+        <button id="settings-save-btn" class="btn btn-primary">Save &amp; Reload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaflet & MarkerCluster JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <!-- App Script -->
+  <script src="js/app.js"></script>
+</body>
+</html>
