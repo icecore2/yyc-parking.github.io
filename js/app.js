@@ -396,7 +396,10 @@ function renderMapFeatures() {
 
       poly.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        selectZone(zone);
+        selectZone(zone, false);
+        if (zone.markerLayer) {
+          zone.markerLayer.openPopup();
+        }
       });
 
       poly.bindTooltip(`<strong>Zone ${zone.zoneNumber}</strong><br>${zone.address}`, {
@@ -427,7 +430,7 @@ function renderMapFeatures() {
 
     marker.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
-      selectZone(zone);
+      selectZone(zone, false);
     });
 
     zone.markerLayer = marker;
@@ -468,19 +471,20 @@ function createPopupHtml(zone) {
         <div><strong>Area:</strong> ${zone.brzName}</div>
       </div>
       <button 
-        onclick="window.cpaApp.selectZoneById('${zone.id}')"
-        class="mt-1 inline-flex w-full items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors"
+        onclick="window.cpaApp.openZoneDetails('${zone.id}')"
+        class="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors"
       >
-        View Full Details
+        <span>More Details</span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
       </button>
     </div>
   `;
 }
 
 /**
- * Select Zone & Open Details Sheet
+ * Select Zone & Optionally Open Details Sheet
  */
-function selectZone(zone) {
+function selectZone(zone, shouldOpenSheet = false) {
   state.selectedZone = zone;
 
   // Reset previously active polyline
@@ -509,7 +513,11 @@ function selectZone(zone) {
   }
 
   renderDetailsSheet(zone);
-  openSheet();
+
+  // Only open the vertical details sheet if explicitly requested or already open
+  if (shouldOpenSheet || elements.detailsSheet.classList.contains('open')) {
+    openSheet();
+  }
 }
 
 /**
@@ -941,7 +949,13 @@ function setupEventListeners() {
 window.cpaApp = {
   selectZoneById: (id) => {
     const zone = state.parsedZones.find(z => String(z.id) === String(id));
-    if (zone) selectZone(zone);
+    if (zone) selectZone(zone, false);
+  },
+  openZoneDetails: (id) => {
+    const zone = state.parsedZones.find(z => String(z.id) === String(id));
+    if (zone) {
+      selectZone(zone, true);
+    }
   },
   zoomToCurrentZone,
 };
