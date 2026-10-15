@@ -1,9 +1,9 @@
 /**
  * Calgary On-Street Parking Map
- * Static OpenStreetMap application displaying Calgary Parking Authority Zones
+ * Refined with shadcn/ui framework design patterns, Lucide icons, and Tailwind CSS.
  */
 
-// Configuration
+// API Configuration
 const DEFAULT_API_URL = 'https://services1.arcgis.com/AVP60cs0Q9PEA8rH/arcgis/rest/services/Calgary_Parking_Authority_On_Street_Parking_Zones_with_Rates/FeatureServer/0/query?where=1%3D1&outFields=*&resultRecordCount=20000&f=json';
 
 // Global Application State
@@ -21,32 +21,46 @@ const state = {
   currentFilterBRZ: 'ALL',
   searchQuery: '',
   isLoading: false,
+  theme: localStorage.getItem('cpa_theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
+  activeTab: 'overview', // 'overview', 'rates', 'rules'
 };
 
 // UI Elements
 const elements = {
   map: null,
+  tileLayers: {},
+  currentBaseLayer: null,
   polylineLayer: null,
   markerClusterGroup: null,
   markerStandardLayer: null,
+  statusPulse: document.getElementById('status-pulse'),
   statusDot: document.getElementById('status-dot'),
   statusText: document.getElementById('status-text'),
   zoneCount: document.getElementById('zone-count'),
   refreshBtn: document.getElementById('refresh-btn'),
   refreshIcon: document.getElementById('refresh-icon'),
+  themeToggleBtn: document.getElementById('theme-toggle-btn'),
+  themeIcon: document.getElementById('theme-icon'),
   searchInput: document.getElementById('search-input'),
   searchClearBtn: document.getElementById('search-clear-btn'),
   brzFilter: document.getElementById('brz-filter'),
   togglePins: document.getElementById('toggle-pins'),
   toggleShapes: document.getElementById('toggle-shapes'),
   toggleCluster: document.getElementById('toggle-cluster'),
-  detailsSidebar: document.getElementById('details-sidebar'),
+  detailsSheet: document.getElementById('details-sheet'),
+  sheetBackdrop: document.getElementById('sheet-backdrop'),
   sidebarCloseBtn: document.getElementById('sidebar-close-btn'),
   sidebarContent: document.getElementById('sidebar-content'),
   sidebarZoneNum: document.getElementById('sidebar-zone-num'),
+  sidebarStallBadge: document.getElementById('sidebar-stall-badge'),
   sidebarStreet: document.getElementById('sidebar-street'),
+  tabBtnOverview: document.getElementById('tab-btn-overview'),
+  tabBtnRates: document.getElementById('tab-btn-rates'),
+  tabBtnRules: document.getElementById('tab-btn-rules'),
+  btnZoomZone: document.getElementById('btn-zoom-zone'),
+  btnGmapsLink: document.getElementById('btn-gmaps-link'),
   settingsBtn: document.getElementById('settings-btn'),
-  settingsModal: document.getElementById('settings-modal'),
+  settingsDialog: document.getElementById('settings-dialog'),
   settingsCloseBtn: document.getElementById('settings-close-btn'),
   settingsSaveBtn: document.getElementById('settings-save-btn'),
   settingsResetBtn: document.getElementById('settings-reset-btn'),
@@ -54,7 +68,7 @@ const elements = {
 };
 
 /**
- * Coordinate Conversion: Web Mercator (EPSG:3857 / 102100) to WGS84 Lat/Lng (EPSG:4326)
+ * Coordinate Conversion: Web Mercator (EPSG:3857) to WGS84 Lat/Lng (EPSG:4326)
  */
 function webMercatorToLatLng(x, y) {
   const lng = (x / 20037508.342789244) * 180;
@@ -64,34 +78,30 @@ function webMercatorToLatLng(x, y) {
 }
 
 /**
- * Normalize any coordinate pair to [lat, lng]
+ * Normalize coordinate pair to [lat, lng]
  */
 function normalizeCoord(pair) {
   const x = pair[0];
   const y = pair[1];
-  // If coordinates are in meters (Web Mercator), convert
   if (Math.abs(x) > 180 || Math.abs(y) > 90) {
     return webMercatorToLatLng(x, y);
   }
-  // Otherwise it's already [lng, lat]
   return [y, x];
 }
 
 /**
- * Calculate the midpoint along a polyline to place the pin
+ * Midpoint along a polyline for pin placement
  */
 function getPolylineMidpoint(latLngs) {
   if (!latLngs || latLngs.length === 0) return [51.0447, -114.0719];
   if (latLngs.length === 1) return latLngs[0];
   
-  // Find total length and middle point
   let totalDist = 0;
   const dists = [0];
   for (let i = 0; i < latLngs.length - 1; i++) {
     const p1 = latLngs[i];
     const p2 = latLngs[i + 1];
-    const d = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
-    totalDist += d;
+    totalDist += Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
     dists.push(totalDist);
   }
   
@@ -100,58 +110,90 @@ function getPolylineMidpoint(latLngs) {
     if (halfDist >= dists[i] && halfDist <= dists[i + 1]) {
       const segLen = dists[i + 1] - dists[i];
       const ratio = segLen === 0 ? 0 : (halfDist - dists[i]) / segLen;
-      const p1 = latLngs[i];
-      const p2 = latLngs[i + 1];
       return [
-        p1[0] + (p2[0] - p1[0]) * ratio,
-        p1[1] + (p2[1] - p1[1]) * ratio
+        latLngs[i][0] + (latLngs[i + 1][0] - latLngs[i][0]) * ratio,
+        latLngs[i][1] + (latLngs[i + 1][1] - latLngs[i][1]) * ratio
       ];
     }
   }
-  
   return latLngs[Math.floor(latLngs.length / 2)];
+}
+
+/**
+ * Initialize Theme (Dark/Light)
+ */
+function initTheme() {
+  applyTheme(state.theme);
+  
+  elements.themeToggleBtn.addEventListener('click', () => {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('cpa_theme', state.theme);
+    applyTheme(state.theme);
+  });
+}
+
+function applyTheme(theme) {
+  const isDark = theme === 'dark';
+  document.documentElement.classList.toggle('dark', isDark);
+
+  if (elements.themeIcon) {
+    elements.themeIcon.setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+  }
+
+  // Sync map tile layer with theme if map is loaded
+  if (elements.map && elements.tileLayers.positron && elements.tileLayers.dark) {
+    if (isDark && elements.map.hasLayer(elements.tileLayers.positron)) {
+      elements.map.removeLayer(elements.tileLayers.positron);
+      elements.map.addLayer(elements.tileLayers.dark);
+    } else if (!isDark && elements.map.hasLayer(elements.tileLayers.dark)) {
+      elements.map.removeLayer(elements.tileLayers.dark);
+      elements.map.addLayer(elements.tileLayers.positron);
+    }
+  }
+
+  refreshIcons();
 }
 
 /**
  * Initialize Leaflet Map
  */
 function initMap() {
-  // Downtown Calgary coordinates
   elements.map = L.map('map', {
     center: [51.0465, -114.068],
     zoom: 14,
     zoomControl: false,
   });
 
-  // Zoom control on top left
   L.control.zoom({ position: 'topleft' }).addTo(elements.map);
 
-  // OpenStreetMap Tile Layer
-  const osmStandard = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  // Tile layers
+  elements.tileLayers.osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors | Data: City of Calgary',
-  }).addTo(elements.map);
-
-  const cartoPositron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 19,
-    subdomains: 'abcd',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   });
 
-  const cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  elements.tileLayers.positron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     maxZoom: 19,
     subdomains: 'abcd',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
   });
 
-  // Base map layer control
+  elements.tileLayers.dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19,
+    subdomains: 'abcd',
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+  });
+
+  // Default layer based on theme
+  const initialLayer = state.theme === 'dark' ? elements.tileLayers.dark : elements.tileLayers.positron;
+  initialLayer.addTo(elements.map);
+
   L.control.layers({
-    'OpenStreetMap Standard': osmStandard,
-    'Clean Street Map (Positron)': cartoPositron,
-    'Night Map (Dark)': cartoDark
+    'Clean Street Map (Positron)': elements.tileLayers.positron,
+    'Night Map (Dark)': elements.tileLayers.dark,
+    'OpenStreetMap Standard': elements.tileLayers.osm,
   }, null, { position: 'topright' }).addTo(elements.map);
 
-  // Initialize Layer Groups
   elements.polylineLayer = L.featureGroup().addTo(elements.map);
   elements.markerClusterGroup = L.markerClusterGroup({
     showCoverageOnHover: false,
@@ -162,9 +204,8 @@ function initMap() {
   }).addTo(elements.map);
   elements.markerStandardLayer = L.featureGroup();
 
-  // Close sidebar when clicking map background
+  // Background map click clears active selection
   elements.map.on('click', (e) => {
-    // If click was not on a layer
     if (!e.originalEvent._handledByLayer) {
       clearSelection();
     }
@@ -184,13 +225,11 @@ async function fetchParkingData() {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     const response = await fetch(state.apiUrl, {
       signal: controller.signal,
-      headers: {
-        'Accept': 'application/json, text/plain, */*'
-      }
+      headers: { 'Accept': 'application/json, text/plain, */*' }
     });
     clearTimeout(timeoutId);
 
@@ -199,26 +238,19 @@ async function fetchParkingData() {
     }
 
     const json = await response.json();
-
     if (json.error) {
       throw new Error(`ArcGIS Error: ${json.error.message || JSON.stringify(json.error)}`);
     }
 
-    let rawList = [];
-    if (json.features && Array.isArray(json.features)) {
-      rawList = json.features;
-    } else {
-      throw new Error('Unexpected API response structure (no features array found)');
-    }
-
+    const rawList = json.features && Array.isArray(json.features) ? json.features : [];
     state.rawFeatures = rawList;
     processFeatures(rawList);
 
-    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    updateStatus('success', `Live data synced at ${now}`);
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    updateStatus('success', `Synced at ${timeStr}`);
   } catch (err) {
     console.error('Failed to fetch parking data:', err);
-    updateStatus('error', `Fetch error: ${err.message}`);
+    updateStatus('error', `Error: ${err.message}`);
   } finally {
     state.isLoading = false;
     if (elements.refreshIcon) elements.refreshIcon.classList.remove('spin');
@@ -227,7 +259,7 @@ async function fetchParkingData() {
 }
 
 /**
- * Parse ArcGIS Features into structured Zone objects
+ * Process features into zone records
  */
 function processFeatures(features) {
   const zones = [];
@@ -237,26 +269,19 @@ function processFeatures(features) {
     const attrs = feat.attributes || {};
     const geom = feat.geometry || {};
     
-    // Geometry can be paths (Esri Polyline) or GeoJSON coordinates
     let paths = geom.paths;
     if (!paths && geom.coordinates) {
       paths = Array.isArray(geom.coordinates[0][0]) ? geom.coordinates : [geom.coordinates];
     }
-    
     if (!paths || paths.length === 0) return;
 
-    // Convert paths to array of [lat, lng]
     const lineSegments = [];
     paths.forEach(subPath => {
       const latLngs = subPath.map(normalizeCoord);
-      if (latLngs.length > 0) {
-        lineSegments.push(latLngs);
-      }
+      if (latLngs.length > 0) lineSegments.push(latLngs);
     });
-
     if (lineSegments.length === 0) return;
 
-    // Representative latLngs for the main shape
     const mainLatLngs = lineSegments[0];
     const midpoint = getPolylineMidpoint(mainLatLngs);
 
@@ -301,43 +326,30 @@ function processFeatures(features) {
   applyFilterAndRender();
 }
 
-/**
- * Populate BRZ dropdown
- */
 function populateBrzFilter(brzList) {
   const currentVal = elements.brzFilter.value;
   elements.brzFilter.innerHTML = '<option value="ALL">All Areas (BRZs)</option>';
-  
   brzList.forEach(brz => {
     const opt = document.createElement('option');
     opt.value = brz;
     opt.textContent = brz;
     elements.brzFilter.appendChild(opt);
   });
-
   if (brzList.includes(currentVal)) {
     elements.brzFilter.value = currentVal;
   }
 }
 
-/**
- * Filter zones based on search query and BRZ selection
- */
 function applyFilterAndRender() {
   const query = state.searchQuery.toLowerCase().trim();
   const brzFilter = state.currentFilterBRZ;
 
   state.filteredZones = state.parsedZones.filter(z => {
-    // Area filter
-    if (brzFilter !== 'ALL' && z.brzName !== brzFilter) {
-      return false;
-    }
-    // Search text filter
+    if (brzFilter !== 'ALL' && z.brzName !== brzFilter) return false;
     if (query) {
-      const matchZone = z.zoneNumber.toLowerCase().includes(query);
-      const matchAddr = z.address.toLowerCase().includes(query);
-      const matchBrz = z.brzName.toLowerCase().includes(query);
-      return matchZone || matchAddr || matchBrz;
+      return z.zoneNumber.toLowerCase().includes(query) ||
+             z.address.toLowerCase().includes(query) ||
+             z.brzName.toLowerCase().includes(query);
     }
     return true;
   });
@@ -346,25 +358,17 @@ function applyFilterAndRender() {
   updateCountDisplay();
 }
 
-/**
- * Determine polyline color based on price zone or BRZ
- */
 function getZoneColor(priceZone) {
   const pz = String(priceZone).toLowerCase();
-  if (pz === '1' || pz === '2') return '#3b82f6'; // Blue
-  if (pz === '3' || pz === '4' || pz.startsWith('4')) return '#06b6d4'; // Cyan
-  if (pz === '5' || pz === '6') return '#10b981'; // Green
-  if (pz === '7' || pz === '8' || pz === '9') return '#f59e0b'; // Amber
-  if (pz === '10' || pz === '11' || pz === '12') return '#8b5cf6'; // Purple
-  if (pz === '13' || pz === '14' || pz === '15') return '#ec4899'; // Pink
-  return '#2563eb'; // Default Primary Blue
+  if (pz === '1' || pz === '2') return '#3b82f6';
+  if (pz === '3' || pz === '4' || pz.startsWith('4')) return '#06b6d4';
+  if (pz === '5' || pz === '6') return '#10b981';
+  if (pz === '7' || pz === '8' || pz === '9') return '#f59e0b';
+  if (pz === '10' || pz === '11' || pz === '12') return '#8b5cf6';
+  return '#3b82f6';
 }
 
-/**
- * Render polylines and pin markers onto the map
- */
 function renderMapFeatures() {
-  // Clear existing layers
   elements.polylineLayer.clearLayers();
   elements.markerClusterGroup.clearLayers();
   elements.markerStandardLayer.clearLayers();
@@ -372,7 +376,7 @@ function renderMapFeatures() {
   const bounds = [];
 
   state.filteredZones.forEach(zone => {
-    // 1. Draw Polyline Shapes
+    // 1. Polyline Shapes
     const polylineColor = getZoneColor(zone.priceZone);
     const polylines = [];
 
@@ -385,37 +389,27 @@ function renderMapFeatures() {
         lineJoin: 'round',
       });
 
-      // Hover effect on shape
-      poly.on('mouseover', () => {
-        poly.setStyle({ weight: 8, opacity: 1 });
-      });
+      poly.on('mouseover', () => poly.setStyle({ weight: 8, opacity: 1 }));
       poly.on('mouseout', () => {
-        if (state.selectedZone !== zone) {
-          poly.setStyle({ weight: 5, opacity: 0.85 });
-        }
+        if (state.selectedZone !== zone) poly.setStyle({ weight: 5, opacity: 0.85 });
       });
 
-      // Click on shape selects zone
       poly.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         selectZone(zone);
       });
 
-      // Tooltip on shape
       poly.bindTooltip(`<strong>Zone ${zone.zoneNumber}</strong><br>${zone.address}`, {
         sticky: true,
         className: 'zone-tooltip'
       });
 
       polylines.push(poly);
-      if (state.showShapes) {
-        elements.polylineLayer.addLayer(poly);
-      }
+      if (state.showShapes) elements.polylineLayer.addLayer(poly);
     });
-
     zone.polylineLayer = polylines;
 
-    // 2. Create Pin Marker at Midpoint
+    // 2. Midpoint Pin Marker
     const customPinIcon = L.divIcon({
       className: 'custom-pin-marker',
       html: `
@@ -423,18 +417,14 @@ function renderMapFeatures() {
           <span>P</span>
         </div>
       `,
-      iconSize: [28, 28],
-      iconAnchor: [14, 28],
-      popupAnchor: [0, -28]
+      iconSize: [26, 26],
+      iconAnchor: [13, 26],
+      popupAnchor: [0, -26]
     });
 
     const marker = L.marker(zone.midpoint, { icon: customPinIcon });
+    marker.bindPopup(createPopupHtml(zone), { maxWidth: 280 });
 
-    // Popup content
-    const popupContent = createPopupHtml(zone);
-    marker.bindPopup(popupContent, { maxWidth: 280 });
-
-    // Pin click event
     marker.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
       selectZone(zone);
@@ -453,59 +443,47 @@ function renderMapFeatures() {
     bounds.push(zone.midpoint);
   });
 
-  // Fit bounds if search or filter applied and results exist
   if ((state.searchQuery || state.currentFilterBRZ !== 'ALL') && bounds.length > 0) {
     try {
       elements.map.fitBounds(L.latLngBounds(bounds), { padding: [50, 50], maxZoom: 16 });
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) {}
   }
 }
 
 /**
- * Format Enforceable Hours into human-friendly string
- * e.g. "0910-1750 MON-SAT" -> "09:10 - 17:50 (Mon-Sat)"
- */
-function formatEnforceableTime(raw) {
-  if (!raw) return 'Check posted signs';
-  // Check pattern like 0900-1800 MON-FRI
-  const m = raw.match(/^(\d{2})(\d{2})-(\d{2})(\d{2})\s*(.*)$/);
-  if (m) {
-    return `${m[1]}:${m[2]} - ${m[3]}:${m[4]} ${m[5]}`;
-  }
-  return raw;
-}
-
-/**
- * Generate Popup HTML
+ * Popup HTML (shadcn Popover card style)
  */
 function createPopupHtml(zone) {
   return `
-    <div class="popup-card">
-      <div class="popup-header">
-        <span class="popup-zone-badge">Zone #${zone.zoneNumber}</span>
-        <small style="color:var(--text-muted);">${zone.stallType || 'Parallel'}</small>
+    <div class="p-3.5 flex flex-col gap-2 min-w-[220px]">
+      <div class="flex items-center justify-between gap-2">
+        <span class="inline-flex items-center rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-bold text-primary">
+          Zone #${zone.zoneNumber}
+        </span>
+        <span class="text-[11px] font-medium text-muted-foreground">${zone.stallType}</span>
       </div>
-      <div class="popup-address">${zone.address}</div>
-      <div class="popup-meta">
+      <div class="font-semibold text-xs text-foreground leading-snug">${zone.address}</div>
+      <div class="text-[11px] text-muted-foreground flex flex-col gap-0.5 border-t border-border pt-1.5 mt-0.5">
         <div><strong>Capacity:</strong> ${zone.zoneCapacity} stalls (${zone.segLength}m)</div>
         <div><strong>Area:</strong> ${zone.brzName}</div>
       </div>
-      <button class="popup-btn" onclick="window.cpaApp.selectZoneById('${zone.id}')">
-        View All Details
+      <button 
+        onclick="window.cpaApp.selectZoneById('${zone.id}')"
+        class="mt-1 inline-flex w-full items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors"
+      >
+        View Full Details
       </button>
     </div>
   `;
 }
 
 /**
- * Select a parking zone and display all details in sidebar
+ * Select Zone & Open Details Sheet
  */
 function selectZone(zone) {
   state.selectedZone = zone;
 
-  // Reset previously active polyline style
+  // Reset previously active polyline
   if (state.activePolyline) {
     state.activePolyline.forEach(p => p.setStyle({
       color: getZoneColor(p._zoneRef?.priceZone || ''),
@@ -514,239 +492,288 @@ function selectZone(zone) {
     }));
   }
 
-  // Highlight current polyline shape
+  // Highlight selected shape in bright amber
   if (zone.polylineLayer) {
     zone.polylineLayer.forEach(p => {
       p._zoneRef = zone;
-      p.setStyle({
-        color: '#f59e0b',
-        weight: 9,
-        opacity: 1
-      });
+      p.setStyle({ color: '#f59e0b', weight: 9, opacity: 1 });
       p.bringToFront();
     });
     state.activePolyline = zone.polylineLayer;
   }
 
-  // Highlight pin marker
+  // Pin active styling
   document.querySelectorAll('.pin-active').forEach(el => el.classList.remove('pin-active'));
   if (zone.markerLayer && zone.markerLayer.getElement()) {
     zone.markerLayer.getElement().classList.add('pin-active');
   }
 
-  // Render details in sidebar
-  renderDetailsSidebar(zone);
-  openSidebar();
+  renderDetailsSheet(zone);
+  openSheet();
 }
 
 /**
- * Render all zone details into the slide-out panel
+ * Format Enforceable Hours into clean readable badges
  */
-function renderDetailsSidebar(zone) {
-  elements.sidebarZoneNum.textContent = `Zone #${zone.zoneNumber}`;
-  elements.sidebarStreet.textContent = zone.address;
+function formatEnforceableTime(raw) {
+  if (!raw) return 'Check posted street signs';
+  const m = raw.match(/^(\d{2})(\d{2})-(\d{2})(\d{2})\s*(.*)$/);
+  if (m) {
+    return `${m[1]}:${m[2]} - ${m[3]}:${m[4]} (${m[5]})`;
+  }
+  return raw;
+}
 
-  // Format Max Time
-  let maxTimeStr = 'Not Specified';
-  if (zone.maxTime) {
-    const hours = Math.floor(zone.maxTime / 60);
-    const mins = zone.maxTime % 60;
-    maxTimeStr = hours > 0 ? `${hours} hr${hours > 1 ? 's' : ''}${mins > 0 ? ` ${mins}m` : ''}` : `${mins} mins`;
+/**
+ * Parse HTML rates into structured cards & badges
+ */
+function formatHtmlRates(rawHtml) {
+  if (!rawHtml || rawHtml.trim() === '') {
+    return `<div class="p-4 text-xs text-muted-foreground italic">No detailed rate schedule registered for this zone. Check on-street signage.</div>`;
   }
 
-  // Block side label
+  // Parse lines or segments
+  const clean = rawHtml
+    .replace(/<br\s*\/?>\s*<br\s*\/?>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?b>/gi, '')
+    .trim();
+
+  const lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
+  let html = `<div class="flex flex-col gap-2">`;
+
+  for (let i = 0; i < lines.length; i += 2) {
+    const timeSlot = lines[i];
+    const rate = lines[i + 1] || '';
+
+    const isFree = rate.toLowerCase().includes('free') || timeSlot.toLowerCase().includes('free');
+    const isNoParking = rate.toLowerCase().includes('no parking') || timeSlot.toLowerCase().includes('no parking');
+
+    let badgeClass = 'border-primary/20 bg-primary/10 text-primary';
+    if (isFree) badgeClass = 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+    if (isNoParking) badgeClass = 'border-rose-500/20 bg-rose-500/10 text-rose-600 dark:text-rose-400';
+
+    html += `
+      <div class="flex items-center justify-between rounded-lg border border-border bg-card p-3 text-xs shadow-sm">
+        <span class="font-medium text-foreground">${timeSlot}</span>
+        ${rate ? `<span class="inline-flex items-center rounded-md border ${badgeClass} px-2 py-0.5 font-bold">${rate}</span>` : ''}
+      </div>
+    `;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+/**
+ * Render Zone Details into Sheet
+ */
+function renderDetailsSheet(zone) {
+  elements.sidebarZoneNum.textContent = `Zone #${zone.zoneNumber}`;
+  elements.sidebarStallBadge.textContent = zone.stallType || 'Parallel';
+  elements.sidebarStreet.textContent = zone.address;
+
+  // Max Stay calculation
+  let maxStayStr = 'Not Specified';
+  if (zone.maxTime) {
+    const hrs = Math.floor(zone.maxTime / 60);
+    const mins = zone.maxTime % 60;
+    maxStayStr = hrs > 0 ? `${hrs} hr${hrs > 1 ? 's' : ''}${mins > 0 ? ` ${mins}m` : ''}` : `${mins} mins`;
+  }
+
   const sideMap = { 'N': 'North', 'S': 'South', 'E': 'East', 'W': 'West' };
   const blockSideName = sideMap[zone.blockSide] || zone.blockSide || 'Both';
 
-  // Format HTML rates content safely
-  let formattedRatesHtml = zone.htmlRates;
-  if (!formattedRatesHtml || formattedRatesHtml.trim() === '') {
-    formattedRatesHtml = '<em>No detailed rate schedule provided in database. Refer to on-street signs.</em>';
-  }
+  // Navigation link
+  elements.btnGmapsLink.href = `https://www.google.com/maps/search/?api=1&query=${zone.midpoint[0]},${zone.midpoint[1]}`;
 
-  // Restriction warning check
-  let restrictionAlert = '';
-  if (zone.restrictType && zone.restrictType.toLowerCase() !== 'none') {
-    restrictionAlert = `
-      <div class="restriction-alert">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-          <line x1="12" y1="9" x2="12" y2="13"/>
-          <line x1="12" y1="17" x2="12.01" y2="17"/>
-        </svg>
-        <div>
-          <strong>Parking Restriction (${zone.restrictType}):</strong><br>
-          ${zone.restrictTime}
+  // 1. Overview Tab Content
+  const overviewHtml = `
+    <div class="flex flex-col gap-3">
+      
+      <!-- Primary Card: Address & Block -->
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-2">
+        <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Location &amp; Block</span>
+        <div class="text-sm font-semibold text-foreground leading-snug">${zone.address}</div>
+        <div class="grid grid-cols-2 gap-2 mt-1">
+          <div class="rounded-md border border-border bg-muted/40 p-2 text-xs">
+            <span class="text-muted-foreground block text-[10px] uppercase">Side of Street</span>
+            <span class="font-semibold text-foreground">${blockSideName} (${zone.blockSide || 'N/A'})</span>
+          </div>
+          <div class="rounded-md border border-border bg-muted/40 p-2 text-xs">
+            <span class="text-muted-foreground block text-[10px] uppercase">Area (BRZ)</span>
+            <span class="font-semibold text-foreground truncate block">${zone.brzName}</span>
+          </div>
         </div>
       </div>
-    `;
-  }
 
-  // Prohibitions check
-  let prohibitions = '';
-  if (zone.noStopping || zone.noParking) {
-    prohibitions = `
-      <div class="restriction-alert danger">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
-        </svg>
-        <div>
-          ${zone.noStopping ? `<strong>No Stopping:</strong> ${zone.noStopping}<br>` : ''}
-          ${zone.noParking ? `<strong>No Parking:</strong> ${zone.noParking}` : ''}
+      <!-- Quick Metrics Grid -->
+      <div class="grid grid-cols-2 gap-2.5">
+        <div class="rounded-xl border border-border bg-card p-3 shadow-sm flex flex-col gap-1">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Stall Capacity</span>
+          <span class="text-base font-bold text-foreground">${zone.zoneCapacity} <span class="text-xs font-normal text-muted-foreground">stalls</span></span>
+        </div>
+        <div class="rounded-xl border border-border bg-card p-3 shadow-sm flex flex-col gap-1">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Max Stay</span>
+          <span class="text-base font-bold text-foreground">${maxStayStr}</span>
+        </div>
+        <div class="rounded-xl border border-border bg-card p-3 shadow-sm flex flex-col gap-1">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Zone Length</span>
+          <span class="text-base font-bold text-foreground">${zone.zoneLength} <span class="text-xs font-normal text-muted-foreground">meters</span></span>
+        </div>
+        <div class="rounded-xl border border-border bg-card p-3 shadow-sm flex flex-col gap-1">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Price Tier</span>
+          <span class="text-base font-bold text-foreground">Tier ${zone.priceZone}</span>
         </div>
       </div>
-    `;
-  }
 
-  const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${zone.midpoint[0]},${zone.midpoint[1]}`;
+      <!-- Enforceable Hours Card -->
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-1.5">
+        <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Enforceable Parking Hours</span>
+        <div class="flex items-center gap-2 text-xs font-medium text-foreground">
+          <i data-lucide="clock" class="h-4 w-4 text-muted-foreground shrink-0"></i>
+          <span>${formatEnforceableTime(zone.enforceableTime)}</span>
+        </div>
+      </div>
 
-  elements.sidebarContent.innerHTML = `
-    <!-- Location Card -->
-    <div class="detail-card">
-      <div class="detail-card-title">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
-        </svg>
-        Location & Street
-      </div>
-      <div class="address-highlight">${zone.address}</div>
-      <div class="quick-stats-grid">
-        <div class="stat-item">
-          <span class="stat-label">Block Side</span>
-          <span class="stat-val">${blockSideName} Side (${zone.blockSide || 'N/A'})</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Area (BRZ)</span>
-          <span class="stat-val">${zone.brzName}</span>
-        </div>
-      </div>
-    </div>
-
-    ${restrictionAlert}
-    ${prohibitions}
-
-    <!-- Capacity & Timing Stats -->
-    <div class="detail-card">
-      <div class="detail-card-title">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-        </svg>
-        Stalls & Enforceability
-      </div>
-      <div class="quick-stats-grid">
-        <div class="stat-item">
-          <span class="stat-label">Stall Capacity</span>
-          <span class="stat-val">${zone.zoneCapacity} stalls</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Max Stay</span>
-          <span class="stat-val">${maxTimeStr}</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Stall Type</span>
-          <span class="stat-val">${zone.stallType}</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Zone Length</span>
-          <span class="stat-val">${zone.zoneLength} meters</span>
-        </div>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Enforceable Hours</span>
-        <span class="info-val">${formatEnforceableTime(zone.enforceableTime)}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Price Zone</span>
-        <span class="info-val">Zone ${zone.priceZone}</span>
-      </div>
       ${zone.permitZone ? `
-      <div class="info-row">
-        <span class="info-label">Permit Zone</span>
-        <span class="info-val">${zone.permitZone}</span>
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex items-center justify-between text-xs">
+        <span class="text-muted-foreground">Residential Permit Zone</span>
+        <span class="font-bold text-foreground">${zone.permitZone}</span>
       </div>` : ''}
-    </div>
 
-    <!-- Rate Schedule -->
-    <div class="detail-card">
-      <div class="detail-card-title">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-        </svg>
-        Rate Schedule & Free Parking
-      </div>
-      <div class="rates-container">
-        ${formattedRatesHtml}
-      </div>
-    </div>
-
-    <!-- Technical Meta -->
-    <div class="detail-card">
-      <div class="detail-card-title">Technical Details</div>
-      <div class="info-row">
-        <span class="info-label">Status</span>
-        <span class="info-val" style="color:var(--success);">${zone.status}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Segment Capacity</span>
-        <span class="info-val">${zone.segCapacity} stalls (${zone.segLength} m)</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Coordinates</span>
-        <span class="info-val">${zone.midpoint[0].toFixed(5)}, ${zone.midpoint[1].toFixed(5)}</span>
-      </div>
-      ${zone.comments ? `
-      <div class="info-row">
-        <span class="info-label">Comments</span>
-        <span class="info-val">${zone.comments}</span>
-      </div>` : ''}
-    </div>
-
-    <!-- Actions -->
-    <div class="sidebar-actions">
-      <button class="btn btn-primary" onclick="window.cpaApp.zoomToCurrentZone()">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
-        </svg>
-        Zoom into Street Segment
-      </button>
-      <a href="${gmapsUrl}" target="_blank" rel="noopener" class="btn btn-secondary" style="text-decoration:none;justify-content:center;">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-        </svg>
-        Open in Google Maps Navigation
-      </a>
     </div>
   `;
+
+  // 2. Rates & Hours Tab Content
+  const ratesHtml = `
+    <div class="flex flex-col gap-3">
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-2">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Live Rates Timetable</span>
+          <span class="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Zone #${zone.zoneNumber}</span>
+        </div>
+        ${formatHtmlRates(zone.htmlRates)}
+      </div>
+
+      <div class="rounded-lg border border-border bg-muted/40 p-3 text-[11px] text-muted-foreground flex items-center gap-2">
+        <i data-lucide="info" class="h-4 w-4 shrink-0"></i>
+        <span>Free parking applies on Sundays and statutory holidays unless specific restriction signage is posted.</span>
+      </div>
+    </div>
+  `;
+
+  // 3. Rules & Restrictions Tab Content
+  let restrictionContent = '';
+  if (zone.restrictType && zone.restrictType.toLowerCase() !== 'none') {
+    restrictionContent += `
+      <div class="rounded-lg border-l-4 border-amber-500 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200 flex flex-col gap-1">
+        <span class="font-bold uppercase tracking-wider text-[10px]">Active Parking Restriction (${zone.restrictType})</span>
+        <p>${zone.restrictTime}</p>
+      </div>
+    `;
+  }
+
+  if (zone.noStopping || zone.noParking) {
+    restrictionContent += `
+      <div class="rounded-lg border-l-4 border-rose-500 bg-rose-500/10 p-3 text-xs text-rose-900 dark:text-rose-200 flex flex-col gap-1">
+        <span class="font-bold uppercase tracking-wider text-[10px]">Prohibition Notices</span>
+        ${zone.noStopping ? `<p><strong>No Stopping:</strong> ${zone.noStopping}</p>` : ''}
+        ${zone.noParking ? `<p><strong>No Parking:</strong> ${zone.noParking}</p>` : ''}
+      </div>
+    `;
+  }
+
+  if (!restrictionContent) {
+    restrictionContent = `
+      <div class="rounded-xl border border-border bg-card p-8 shadow-sm flex flex-col items-center justify-center text-center gap-2 text-muted-foreground">
+        <i data-lucide="check-circle" class="h-8 w-8 text-emerald-500"></i>
+        <div class="text-sm font-semibold text-foreground">Standard Parking Regulations</div>
+        <p class="text-xs">No special AM/PM tow-away rush-hour restrictions are registered for this zone.</p>
+      </div>
+    `;
+  }
+
+  const rulesHtml = `
+    <div class="flex flex-col gap-3">
+      ${restrictionContent}
+
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-2 text-xs">
+        <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Technical Identifiers</span>
+        <div class="flex justify-between py-1 border-b border-border">
+          <span class="text-muted-foreground">Database Status</span>
+          <span class="font-semibold text-emerald-600 dark:text-emerald-400">${zone.status}</span>
+        </div>
+        <div class="flex justify-between py-1 border-b border-border">
+          <span class="text-muted-foreground">Segment Length</span>
+          <span class="font-semibold text-foreground">${zone.segLength} meters (${zone.segCapacity} stalls)</span>
+        </div>
+        <div class="flex justify-between py-1">
+          <span class="text-muted-foreground">Coordinates</span>
+          <span class="font-mono text-foreground">${zone.midpoint[0].toFixed(5)}, ${zone.midpoint[1].toFixed(5)}</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Store in cache for tab switching
+  zone._tabHtml = {
+    overview: overviewHtml,
+    rates: ratesHtml,
+    rules: rulesHtml
+  };
+
+  switchTab(state.activeTab);
 }
 
 /**
- * Zoom map into selected zone
+ * Switch Active Tab in Sheet
  */
+function switchTab(tabName) {
+  state.activeTab = tabName;
+
+  const tabButtons = {
+    overview: elements.tabBtnOverview,
+    rates: elements.tabBtnRates,
+    rules: elements.tabBtnRules
+  };
+
+  Object.keys(tabButtons).forEach(name => {
+    const btn = tabButtons[name];
+    if (name === tabName) {
+      btn.className = 'tab-trigger inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium ring-offset-background transition-all bg-background text-foreground shadow-sm';
+    } else {
+      btn.className = 'tab-trigger inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium ring-offset-background transition-all text-muted-foreground hover:text-foreground';
+    }
+  });
+
+  if (state.selectedZone && state.selectedZone._tabHtml) {
+    elements.sidebarContent.innerHTML = state.selectedZone._tabHtml[tabName] || state.selectedZone._tabHtml.overview;
+    refreshIcons();
+  }
+}
+
 function zoomToCurrentZone() {
   if (!state.selectedZone) return;
   const zone = state.selectedZone;
-  
   if (zone.polylineLayer && zone.polylineLayer.length > 0) {
     const group = L.featureGroup(zone.polylineLayer);
     elements.map.fitBounds(group.getBounds(), { padding: [80, 80], maxZoom: 18 });
   } else {
     elements.map.setView(zone.midpoint, 18);
   }
-
-  // Open marker popup if available
-  if (zone.markerLayer) {
-    zone.markerLayer.openPopup();
-  }
+  if (zone.markerLayer) zone.markerLayer.openPopup();
 }
 
-function openSidebar() {
-  elements.detailsSidebar.classList.add('open');
-  document.body.classList.add('sidebar-open');
+function openSheet() {
+  elements.detailsSheet.classList.add('open');
+  elements.sheetBackdrop.classList.add('open');
+  refreshIcons();
 }
 
-function closeSidebar() {
-  elements.detailsSidebar.classList.remove('open');
-  document.body.classList.remove('sidebar-open');
+function closeSheet() {
+  elements.detailsSheet.classList.remove('open');
+  elements.sheetBackdrop.classList.remove('open');
 }
 
 function clearSelection() {
@@ -760,80 +787,85 @@ function clearSelection() {
     state.activePolyline = null;
   }
   document.querySelectorAll('.pin-active').forEach(el => el.classList.remove('pin-active'));
-  closeSidebar();
+  closeSheet();
 }
 
 /**
- * Update Status Badge UI
+ * Status UI Update
  */
 function updateStatus(type, message) {
-  elements.statusDot.className = `status-dot ${type}`;
   elements.statusText.textContent = message;
+
+  if (type === 'loading') {
+    elements.statusPulse.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75';
+    elements.statusDot.className = 'relative inline-flex rounded-full h-2 w-2 bg-amber-500';
+  } else if (type === 'success') {
+    elements.statusPulse.className = 'hidden';
+    elements.statusDot.className = 'relative inline-flex rounded-full h-2 w-2 bg-emerald-500';
+  } else if (type === 'error') {
+    elements.statusPulse.className = 'hidden';
+    elements.statusDot.className = 'relative inline-flex rounded-full h-2 w-2 bg-rose-500';
+  }
 }
 
-/**
- * Update Zone Count Display
- */
 function updateCountDisplay() {
   const visible = state.filteredZones.length;
   const total = state.parsedZones.length;
-  if (visible === total) {
-    elements.zoneCount.textContent = `${total.toLocaleString()} parking zones`;
-  } else {
-    elements.zoneCount.textContent = `${visible.toLocaleString()} of ${total.toLocaleString()} zones`;
+  elements.zoneCount.textContent = visible === total 
+    ? `${total.toLocaleString()} parking zones`
+    : `${visible.toLocaleString()} of ${total.toLocaleString()} zones`;
+}
+
+/**
+ * Re-render Lucide icons safely
+ */
+function refreshIcons() {
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons();
   }
 }
 
 /**
- * Set up event listeners
+ * Setup Event Handlers
  */
 function setupEventListeners() {
-  // Refresh Button
-  elements.refreshBtn.addEventListener('click', () => {
-    fetchParkingData();
-  });
+  // Refresh button
+  elements.refreshBtn.addEventListener('click', () => fetchParkingData());
 
-  // Search Input
-  let debounceTimeout = null;
+  // Search input with debounce
+  let debounceTimer = null;
   elements.searchInput.addEventListener('input', (e) => {
     state.searchQuery = e.target.value;
-    elements.searchClearBtn.style.display = state.searchQuery ? 'block' : 'none';
-    
-    clearTimeout(debounceTimeout);
-    debounceTimeout = setTimeout(() => {
-      applyFilterAndRender();
-    }, 200);
+    elements.searchClearBtn.classList.toggle('hidden', !state.searchQuery);
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => applyFilterAndRender(), 200);
   });
 
   elements.searchClearBtn.addEventListener('click', () => {
     elements.searchInput.value = '';
     state.searchQuery = '';
-    elements.searchClearBtn.style.display = 'none';
+    elements.searchClearBtn.classList.add('hidden');
+    elements.searchInput.focus();
     applyFilterAndRender();
   });
 
-  // Area (BRZ) Filter
+  // Area (BRZ) dropdown
   elements.brzFilter.addEventListener('change', (e) => {
     state.currentFilterBRZ = e.target.value;
     applyFilterAndRender();
   });
 
-  // Toggle Pins
+  // Layer Toggles
   elements.togglePins.addEventListener('change', (e) => {
     state.showPins = e.target.checked;
     if (state.showPins) {
-      if (state.useClustering) {
-        elements.map.addLayer(elements.markerClusterGroup);
-      } else {
-        elements.map.addLayer(elements.markerStandardLayer);
-      }
+      elements.map.addLayer(state.useClustering ? elements.markerClusterGroup : elements.markerStandardLayer);
     } else {
       elements.map.removeLayer(elements.markerClusterGroup);
       elements.map.removeLayer(elements.markerStandardLayer);
     }
   });
 
-  // Toggle Shapes (Polylines)
   elements.toggleShapes.addEventListener('change', (e) => {
     state.showShapes = e.target.checked;
     if (state.showShapes) {
@@ -843,25 +875,29 @@ function setupEventListeners() {
     }
   });
 
-  // Toggle Cluster
   elements.toggleCluster.addEventListener('change', (e) => {
     state.useClustering = e.target.checked;
     renderMapFeatures();
   });
 
-  // Sidebar Close Button
-  elements.sidebarCloseBtn.addEventListener('click', () => {
-    closeSidebar();
-  });
+  // Sheet Controls
+  elements.sidebarCloseBtn.addEventListener('click', () => closeSheet());
+  elements.sheetBackdrop.addEventListener('click', () => closeSheet());
+  elements.btnZoomZone.addEventListener('click', () => zoomToCurrentZone());
 
-  // Settings Modal
+  // Tabs
+  elements.tabBtnOverview.addEventListener('click', () => switchTab('overview'));
+  elements.tabBtnRates.addEventListener('click', () => switchTab('rates'));
+  elements.tabBtnRules.addEventListener('click', () => switchTab('rules'));
+
+  // Settings Dialog
   elements.settingsBtn.addEventListener('click', () => {
     elements.apiUrlInput.value = state.apiUrl;
-    elements.settingsModal.classList.add('open');
+    elements.settingsDialog.classList.add('open');
   });
 
   elements.settingsCloseBtn.addEventListener('click', () => {
-    elements.settingsModal.classList.remove('open');
+    elements.settingsDialog.classList.remove('open');
   });
 
   elements.settingsResetBtn.addEventListener('click', () => {
@@ -869,24 +905,39 @@ function setupEventListeners() {
   });
 
   elements.settingsSaveBtn.addEventListener('click', () => {
-    const newUrl = elements.apiUrlInput.value.trim();
-    if (newUrl) {
-      state.apiUrl = newUrl;
-      localStorage.setItem('cpa_api_url', newUrl);
-      elements.settingsModal.classList.remove('open');
+    const val = elements.apiUrlInput.value.trim();
+    if (val) {
+      state.apiUrl = val;
+      localStorage.setItem('cpa_api_url', val);
+      elements.settingsDialog.classList.remove('open');
       fetchParkingData();
     }
   });
 
-  // Close modal when clicking backdrop
-  elements.settingsModal.addEventListener('click', (e) => {
-    if (e.target === elements.settingsModal) {
-      elements.settingsModal.classList.remove('open');
+  elements.settingsDialog.addEventListener('click', (e) => {
+    if (e.target === elements.settingsDialog) {
+      elements.settingsDialog.classList.remove('open');
+    }
+  });
+
+  // Global Keyboard Shortcuts (⌘K / Ctrl+K and Escape)
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      elements.searchInput.focus();
+      elements.searchInput.select();
+    }
+    if (e.key === 'Escape') {
+      if (elements.settingsDialog.classList.contains('open')) {
+        elements.settingsDialog.classList.remove('open');
+      } else if (elements.detailsSheet.classList.contains('open')) {
+        closeSheet();
+      }
     }
   });
 }
 
-// Expose public methods for inline HTML events
+// Global API for inline onclicks
 window.cpaApp = {
   selectZoneById: (id) => {
     const zone = state.parsedZones.find(z => String(z.id) === String(id));
@@ -895,9 +946,11 @@ window.cpaApp = {
   zoomToCurrentZone,
 };
 
-// Bootstrap on DOM ready
+// Bootstrap App
 document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
   initMap();
   setupEventListeners();
   fetchParkingData();
+  refreshIcons();
 });

@@ -1,158 +1,327 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Calgary On-Street Parking Map</title>
+  <title>Calgary Parking Map — On-Street Parking Zones &amp; Live Rates</title>
   
+  <!-- Inter Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+          },
+          colors: {
+            border: "hsl(var(--border))",
+            input: "hsl(var(--input))",
+            ring: "hsl(var(--ring))",
+            background: "hsl(var(--background))",
+            foreground: "hsl(var(--foreground))",
+            primary: {
+              DEFAULT: "hsl(var(--primary))",
+              foreground: "hsl(var(--primary-foreground))",
+            },
+            secondary: {
+              DEFAULT: "hsl(var(--secondary))",
+              foreground: "hsl(var(--secondary-foreground))",
+            },
+            destructive: {
+              DEFAULT: "hsl(var(--destructive))",
+              foreground: "hsl(var(--destructive-foreground))",
+            },
+            muted: {
+              DEFAULT: "hsl(var(--muted))",
+              foreground: "hsl(var(--muted-foreground))",
+            },
+            accent: {
+              DEFAULT: "hsl(var(--accent))",
+              foreground: "hsl(var(--accent-foreground))",
+            },
+            popover: {
+              DEFAULT: "hsl(var(--popover))",
+              foreground: "hsl(var(--popover-foreground))",
+            },
+            card: {
+              DEFAULT: "hsl(var(--card))",
+              foreground: "hsl(var(--card-foreground))",
+            },
+          },
+          borderRadius: {
+            lg: "var(--radius)",
+            md: "calc(var(--radius) - 2px)",
+            sm: "calc(var(--radius) - 4px)",
+          },
+        }
+      }
+    }
+  </script>
+
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  
-  <!-- Leaflet MarkerCluster CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  
-  <!-- Custom Styles -->
-  <link rel="stylesheet" href="css/styles.css">
-</head>
-<body>
 
-  <!-- App Header -->
-  <header class="app-header">
-    <div class="brand">
-      <div class="brand-icon">P</div>
-      <div class="brand-titles">
-        <h1>Calgary Parking Map</h1>
-        <span>On-Street Parking Zones &amp; Live Rates</span>
+  <!-- Custom shadcn styles & overrides -->
+  <link rel="stylesheet" href="css/styles.css">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="h-full flex flex-col bg-background text-foreground overflow-hidden antialiased">
+
+  <!-- ========================================================================
+       Header / Navbar (shadcn style)
+       ======================================================================== -->
+  <header class="sticky top-0 z-30 flex h-14 w-full items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 gap-4">
+    
+    <!-- Brand Title -->
+    <div class="flex items-center gap-3 shrink-0">
+      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold text-sm shadow-sm">
+        P
+      </div>
+      <div class="hidden sm:flex flex-col">
+        <div class="flex items-center gap-2">
+          <span class="font-semibold text-sm tracking-tight text-foreground">Calgary Parking Map</span>
+          <span class="inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Live Rates</span>
+        </div>
       </div>
     </div>
 
-    <!-- Middle Controls: Search & Area Filter -->
-    <div class="header-search-bar">
-      <div class="search-input-wrapper">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="11" cy="11" r="8"></circle>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-        </svg>
-        <input type="text" id="search-input" class="search-input" placeholder="Search zone # or street (e.g. 1008, Eau Claire)..." autocomplete="off">
-        <button id="search-clear-btn" class="search-clear-btn" title="Clear search">&times;</button>
+    <!-- Search Bar & Area Select (shadcn Command / Input style) -->
+    <div class="flex flex-1 items-center gap-2 max-w-lg">
+      <div class="relative flex-1">
+        <i data-lucide="search" class="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none"></i>
+        <input 
+          type="text" 
+          id="search-input" 
+          class="flex h-9 w-full rounded-md border border-input bg-transparent pl-8 pr-12 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          placeholder="Search zone # or street (e.g. 1008, 10 St)..."
+          autocomplete="off"
+        >
+        <button id="search-clear-btn" class="absolute right-7 top-2.5 hidden text-muted-foreground hover:text-foreground">
+          <i data-lucide="x" class="h-4 w-4"></i>
+        </button>
+        <kbd class="pointer-events-none absolute right-2 top-2.5 hidden h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">⌘K</kbd>
       </div>
 
-      <select id="brz-filter" class="select-filter" title="Filter by Area (BRZ)">
+      <!-- Area (BRZ) Filter -->
+      <select 
+        id="brz-filter" 
+        class="hidden md:flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer max-w-[170px]"
+        title="Filter by Business Revitalization Zone"
+      >
         <option value="ALL">All Areas (BRZs)</option>
       </select>
     </div>
 
     <!-- Header Actions -->
-    <div class="header-actions">
-      <!-- Get Latest Information Button -->
-      <button id="refresh-btn" class="btn btn-primary" title="Fetch latest data from Calgary Parking Authority">
-        <svg id="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M23 4v6h-6"></path>
-          <path d="M1 20v-6h6"></path>
-          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-        </svg>
-        <span>Get Latest Information</span>
+    <div class="flex items-center gap-2 shrink-0">
+      
+      <!-- Refresh Button (shadcn Button default) -->
+      <button 
+        id="refresh-btn" 
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 px-3.5"
+        title="Fetch latest information from Calgary Parking Authority"
+      >
+        <i id="refresh-icon" data-lucide="refresh-cw" class="h-4 w-4"></i>
+        <span class="hidden sm:inline">Get Latest Info</span>
       </button>
 
-      <!-- API Settings Modal Button -->
-      <button id="settings-btn" class="btn btn-secondary btn-icon-only" title="API Configuration">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
+      <!-- Dark / Light Mode Toggle (shadcn Button outline icon) -->
+      <button 
+        id="theme-toggle-btn" 
+        class="inline-flex items-center justify-center rounded-md border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground h-9 w-9 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        title="Toggle Dark / Light Mode"
+      >
+        <i id="theme-icon" data-lucide="moon" class="h-4 w-4"></i>
+      </button>
+
+      <!-- Settings Button (shadcn Button outline icon) -->
+      <button 
+        id="settings-btn" 
+        class="inline-flex items-center justify-center rounded-md border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground h-9 w-9 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        title="API Configuration"
+      >
+        <i data-lucide="settings" class="h-4 w-4"></i>
       </button>
     </div>
   </header>
 
-  <!-- Main Map Container -->
-  <main class="app-main">
-    <div id="map"></div>
+  <!-- ========================================================================
+       Main Content / Map Layout
+       ======================================================================== -->
+  <main class="relative flex-1 w-full h-full overflow-hidden">
+    
+    <!-- Leaflet Map Container -->
+    <div id="map" class="w-full h-full"></div>
 
-    <!-- Status & Count Overlay -->
-    <div class="map-status-overlay">
-      <div class="status-chip">
-        <span id="status-dot" class="status-dot loading"></span>
-        <span id="status-text">Connecting to Calgary Parking Authority...</span>
+    <!-- Status & Zones Count (Top-Left Badge Overlay) -->
+    <div class="absolute top-4 left-14 z-20 flex flex-col sm:flex-row gap-2 pointer-events-none">
+      <div class="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border bg-background/90 px-3 py-1 text-xs font-medium text-foreground shadow-sm backdrop-blur">
+        <span class="relative flex h-2 w-2">
+          <span id="status-pulse" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+          <span id="status-dot" class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+        </span>
+        <span id="status-text" class="truncate max-w-[220px]">Connecting to Calgary Parking...</span>
       </div>
-      <div class="status-chip" style="font-weight: 700;">
-        <span id="zone-count">0 parking zones</span>
+
+      <div class="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-border bg-background/90 px-3 py-1 text-xs font-medium text-foreground shadow-sm backdrop-blur">
+        <i data-lucide="layers" class="h-3.5 w-3.5 text-muted-foreground"></i>
+        <span id="zone-count" class="font-semibold">0 parking zones</span>
       </div>
     </div>
 
-    <!-- Floating Layer Controls -->
-    <div class="map-floating-tools">
-      <label class="tool-checkbox">
-        <input type="checkbox" id="toggle-pins" checked>
-        <span>Pins</span>
+    <!-- Floating Map Controls (Bottom-Left Card Overlay) -->
+    <div class="absolute bottom-6 left-4 z-20 flex items-center gap-4 rounded-lg border border-border bg-background/95 px-3 py-2 shadow-lg backdrop-blur text-xs">
+      <label class="flex items-center gap-2 cursor-pointer select-none text-foreground font-medium">
+        <input type="checkbox" id="toggle-pins" class="h-3.5 w-3.5 rounded border-border text-primary focus:ring-ring accent-neutral-900 dark:accent-neutral-100" checked>
+        <span class="flex items-center gap-1"><i data-lucide="map-pin" class="h-3.5 w-3.5 text-muted-foreground"></i> Pins</span>
       </label>
-      <label class="tool-checkbox">
-        <input type="checkbox" id="toggle-shapes" checked>
-        <span>Shapes</span>
+
+      <div class="h-4 w-px bg-border"></div>
+
+      <label class="flex items-center gap-2 cursor-pointer select-none text-foreground font-medium">
+        <input type="checkbox" id="toggle-shapes" class="h-3.5 w-3.5 rounded border-border text-primary focus:ring-ring accent-neutral-900 dark:accent-neutral-100" checked>
+        <span class="flex items-center gap-1"><i data-lucide="route" class="h-3.5 w-3.5 text-muted-foreground"></i> Shapes</span>
       </label>
-      <label class="tool-checkbox">
-        <input type="checkbox" id="toggle-cluster" checked>
-        <span>Cluster Pins</span>
+
+      <div class="h-4 w-px bg-border"></div>
+
+      <label class="flex items-center gap-2 cursor-pointer select-none text-foreground font-medium">
+        <input type="checkbox" id="toggle-cluster" class="h-3.5 w-3.5 rounded border-border text-primary focus:ring-ring accent-neutral-900 dark:accent-neutral-100" checked>
+        <span class="flex items-center gap-1"><i data-lucide="network" class="h-3.5 w-3.5 text-muted-foreground"></i> Cluster</span>
       </label>
     </div>
 
-    <!-- Legend -->
-    <div class="map-legend">
-      <div class="legend-title">Price Zone Legend</div>
-      <div class="legend-item"><span class="legend-line" style="background:#3b82f6;"></span> Zones 1 - 2</div>
-      <div class="legend-item"><span class="legend-line" style="background:#06b6d4;"></span> Zones 3 - 4</div>
-      <div class="legend-item"><span class="legend-line" style="background:#10b981;"></span> Zones 5 - 6</div>
-      <div class="legend-item"><span class="legend-line" style="background:#f59e0b;"></span> Zones 7 - 9</div>
-      <div class="legend-item"><span class="legend-line" style="background:#8b5cf6;"></span> Zones 10 - 12</div>
+    <!-- Price Zone Legend (Bottom-Right Card Overlay) -->
+    <div id="map-legend" class="hidden sm:flex absolute bottom-6 right-4 z-20 flex-col gap-1.5 rounded-lg border border-border bg-background/95 p-3 shadow-lg backdrop-blur text-xs transition-all">
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Price Tier Legend</div>
+      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#3b82f6]"></span> Zones 1 - 2</div>
+      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#06b6d4]"></span> Zones 3 - 4</div>
+      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#10b981]"></span> Zones 5 - 6</div>
+      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#f59e0b]"></span> Zones 7 - 9</div>
+      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#8b5cf6]"></span> Zones 10+</div>
     </div>
 
-    <!-- Slide-Out Details Sidebar -->
-    <aside id="details-sidebar" class="details-sidebar">
-      <div class="sidebar-header">
-        <div class="sidebar-title-group">
-          <span id="sidebar-zone-num" class="zone-badge-lg">Zone #---</span>
-          <div>
-            <h2 id="sidebar-street">Select a Zone</h2>
+    <!-- ======================================================================
+         Slide-Out Details Sheet (shadcn Sheet Component)
+         ====================================================================== -->
+    <!-- Backdrop Overlay -->
+    <div id="sheet-backdrop" class="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm sheet-backdrop"></div>
+
+    <!-- Sheet Panel -->
+    <aside id="details-sheet" class="fixed right-0 top-0 bottom-0 z-50 w-full sm:max-w-md border-l border-border bg-background shadow-2xl flex flex-col sheet-panel">
+      
+      <!-- Sheet Header -->
+      <div class="flex items-start justify-between border-b border-border p-5">
+        <div class="flex flex-col gap-1 pr-4">
+          <div class="flex items-center gap-2">
+            <span id="sidebar-zone-num" class="inline-flex items-center rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-bold text-primary">
+              Zone #---
+            </span>
+            <span id="sidebar-stall-badge" class="inline-flex items-center rounded-md border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+              Parallel
+            </span>
           </div>
+          <h2 id="sidebar-street" class="text-base font-semibold text-foreground leading-snug">
+            Select a Parking Zone
+          </h2>
         </div>
-        <button id="sidebar-close-btn" class="sidebar-close-btn" title="Close Panel">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
+        
+        <!-- Close Button (Ghost icon) -->
+        <button id="sidebar-close-btn" class="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 p-1">
+          <i data-lucide="x" class="h-5 w-5"></i>
         </button>
       </div>
 
-      <div id="sidebar-content" class="sidebar-content">
-        <div class="sidebar-empty-state">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
-            <circle cx="12" cy="10" r="3"></circle>
-          </svg>
-          <p>Click on any parking pin or street shape to inspect complete rates, limits, and capacity.</p>
+      <!-- Sheet Tabs Header (shadcn TabsList) -->
+      <div class="px-5 pt-3 border-b border-border bg-muted/30">
+        <div class="inline-flex h-9 w-full items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground grid grid-cols-3">
+          <button id="tab-btn-overview" class="tab-trigger inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 bg-background text-foreground shadow-sm">
+            Overview
+          </button>
+          <button id="tab-btn-rates" class="tab-trigger inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 text-muted-foreground">
+            Rates &amp; Hours
+          </button>
+          <button id="tab-btn-rules" class="tab-trigger inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 text-muted-foreground">
+            Restrictions
+          </button>
         </div>
+      </div>
+
+      <!-- Sheet Scrollable Body -->
+      <div id="sidebar-content" class="flex-1 overflow-y-auto p-5 flex flex-col gap-4">
+        <!-- Default Empty State -->
+        <div class="flex flex-col items-center justify-center text-center py-16 text-muted-foreground gap-3">
+          <div class="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+            <i data-lucide="map-pin" class="h-6 w-6 text-muted-foreground"></i>
+          </div>
+          <p class="text-sm max-w-xs">Click on any map pin or street shape to view complete parking rates, limits, and capacity.</p>
+        </div>
+      </div>
+
+      <!-- Sheet Footer Actions -->
+      <div id="sidebar-footer" class="border-t border-border p-4 bg-muted/20 flex flex-col gap-2">
+        <button id="btn-zoom-zone" class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors">
+          <i data-lucide="focus" class="h-4 w-4"></i>
+          Zoom into Street Segment
+        </button>
+        <a id="btn-gmaps-link" href="#" target="_blank" rel="noopener" class="inline-flex w-full items-center justify-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors">
+          <i data-lucide="navigation" class="h-4 w-4"></i>
+          Navigate with Google Maps
+        </a>
       </div>
     </aside>
+
   </main>
 
-  <!-- API URL Settings Modal -->
-  <div id="settings-modal" class="modal-overlay">
-    <div class="modal-box">
-      <div class="modal-header">
-        <h3>ArcGIS API Configuration</h3>
-        <button id="settings-close-btn" class="sidebar-close-btn">&times;</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label for="api-url-input">ArcGIS FeatureServer Query URL</label>
-          <textarea id="api-url-input"></textarea>
-          <p class="form-help">Default: Calgary Parking Authority On-Street Parking Zones with Rates FeatureServer</p>
+  <!-- ========================================================================
+       API Configuration Dialog (shadcn Dialog Component)
+       ======================================================================== -->
+  <div id="settings-dialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm dialog-overlay p-4">
+    <div class="dialog-content w-full max-w-lg rounded-xl border border-border bg-background p-6 shadow-xl flex flex-col gap-4">
+      
+      <!-- Dialog Header -->
+      <div class="flex items-center justify-between">
+        <div class="flex flex-col gap-1">
+          <h3 class="text-lg font-semibold leading-none tracking-tight">ArcGIS API Configuration</h3>
+          <p class="text-sm text-muted-foreground">Configure the Calgary Parking Authority FeatureServer query endpoint.</p>
         </div>
+        <button id="settings-close-btn" class="rounded-sm opacity-70 hover:opacity-100 p-1">
+          <i data-lucide="x" class="h-5 w-5"></i>
+        </button>
       </div>
-      <div class="modal-footer">
-        <button id="settings-reset-btn" class="btn btn-secondary">Reset to Default</button>
-        <button id="settings-save-btn" class="btn btn-primary">Save &amp; Reload</button>
+
+      <!-- Dialog Body -->
+      <div class="flex flex-col gap-2">
+        <label for="api-url-input" class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Query URL</label>
+        <textarea 
+          id="api-url-input" 
+          rows="4" 
+          class="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs font-mono shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        ></textarea>
+        <p class="text-[11px] text-muted-foreground">Default queries on-street parking zones and live rate schedules.</p>
       </div>
+
+      <!-- Dialog Footer -->
+      <div class="flex items-center justify-end gap-2 pt-2 border-t border-border">
+        <button id="settings-reset-btn" class="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground">
+          Reset Default
+        </button>
+        <button id="settings-save-btn" class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90">
+          Save &amp; Reload
+        </button>
+      </div>
+
     </div>
   </div>
 
@@ -160,7 +329,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
-  <!-- App Script -->
+  <!-- Application Logic -->
   <script src="js/app.js"></script>
 </body>
 </html>
