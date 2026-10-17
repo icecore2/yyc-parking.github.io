@@ -257,6 +257,26 @@
   </div>
 
   <!-- ========================================================================
+       Provider Filter Bar: Toggle Free Municipal & Private Providers
+       ======================================================================== -->
+  <div id="provider-toolbar-row" class="z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/90 px-4 py-1.5 backdrop-blur gap-2 text-xs">
+    <div class="flex items-center gap-1.5 text-muted-foreground font-semibold text-[11px] shrink-0">
+      <i data-lucide="layers" class="h-3.5 w-3.5 text-primary"></i>
+      <span>Providers:</span>
+    </div>
+    
+    <div id="provider-pills-container" class="flex flex-wrap items-center gap-1.5 flex-1">
+      <!-- Generated dynamically by app.js -->
+    </div>
+
+    <div class="flex items-center gap-2 shrink-0 text-[11px]">
+      <button id="btn-select-all-providers" type="button" class="text-primary hover:underline font-semibold transition-colors">Select All</button>
+      <span class="text-muted-foreground/40">•</span>
+      <button id="btn-select-none-providers" type="button" class="text-muted-foreground hover:text-foreground font-medium transition-colors">Clear</button>
+    </div>
+  </div>
+
+  <!-- ========================================================================
        Main Content / Map Layout
        ======================================================================== -->
   <main class="relative flex-1 w-full h-full overflow-hidden">
@@ -328,14 +348,37 @@
       </label>
     </div>
 
-    <!-- Price Zone Legend (Bottom-Right Card Overlay) -->
-    <div id="map-legend" class="hidden sm:flex absolute bottom-6 right-4 z-20 flex-col gap-1.5 rounded-lg border border-border bg-background/95 p-3 shadow-lg backdrop-blur text-xs transition-all">
-      <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Price Tier Legend</div>
-      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#3b82f6]"></span> Zones 1 - 2</div>
-      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#06b6d4]"></span> Zones 3 - 4</div>
-      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#10b981]"></span> Zones 5 - 6</div>
-      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#f59e0b]"></span> Zones 7 - 9</div>
-      <div class="flex items-center gap-2"><span class="h-2 w-5 rounded-full bg-[#8b5cf6]"></span> Zones 10+</div>
+    <!-- Price & Provider Legend (Bottom-Right Card Overlay) -->
+    <div id="map-legend" class="hidden sm:flex absolute bottom-6 right-4 z-20 flex-col gap-2 rounded-lg border border-border bg-background/95 p-3 shadow-lg backdrop-blur text-xs transition-all min-w-[190px]">
+      <div class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground border-b border-border pb-1">
+        Provider Pins
+      </div>
+      <div class="flex flex-col gap-1.5 text-[11px]">
+        <div class="flex items-center gap-2">
+          <span class="h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white bg-[#059669] shadow-xs">P+</span>
+          <span class="truncate font-medium">ParkPlus (On-Street)</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white bg-[#2563eb] shadow-xs">P</span>
+          <span class="truncate font-medium">City Parkades &amp; Lots</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white bg-[#dc2626] shadow-xs">T</span>
+          <span class="truncate font-medium">Transit Park &amp; Ride</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white bg-[#be123c] shadow-xs">i</span>
+          <span class="truncate font-medium">Impark (hangTag)</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white bg-[#0891b2] shadow-xs">i</span>
+          <span class="truncate font-medium">Indigo Neo</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white bg-[#1e3a8a] shadow-xs">P</span>
+          <span class="truncate font-medium">Precise ParkLink</span>
+        </div>
+      </div>
     </div>
 
     <!-- ======================================================================
@@ -349,8 +392,9 @@
       
       <!-- Sheet Header -->
       <div class="flex items-start justify-between border-b border-border p-5">
-        <div class="flex flex-col gap-1 pr-4">
-          <div class="flex items-center gap-2">
+        <div class="flex flex-col gap-1.5 pr-4">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span id="sidebar-provider-badge"></span>
             <span id="sidebar-zone-num" class="inline-flex items-center rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-bold text-primary">
               Zone #---
             </span>
@@ -400,13 +444,17 @@
 
       <!-- Sheet Footer Actions -->
       <div id="sidebar-footer" class="border-t border-border p-4 bg-muted/20 flex flex-col gap-2">
+        <a id="btn-provider-action" href="#" target="_blank" rel="noopener" class="hidden inline-flex w-full items-center justify-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-sm font-medium text-white shadow transition-colors">
+          <i data-lucide="external-link" class="h-4 w-4"></i>
+          <span id="btn-provider-action-text">Pay / View on Provider App</span>
+        </a>
         <button id="btn-zoom-zone" class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors">
           <i data-lucide="focus" class="h-4 w-4"></i>
-          Zoom into Street Segment
+          <span>Zoom into Facility</span>
         </button>
         <a id="btn-gmaps-link" href="#" target="_blank" rel="noopener" class="inline-flex w-full items-center justify-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors">
           <i data-lucide="navigation" class="h-4 w-4"></i>
-          Navigate with Google Maps
+          <span>Navigate with Google Maps</span>
         </a>
       </div>
     </aside>
@@ -576,6 +624,9 @@
 
   <!-- Chart.js 4.4.1 -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <!-- Provider Registry & Branded Pin System -->
+  <script src="js/providers.js"></script>
 
   <!-- Application Logic -->
   <script src="js/app.js"></script>

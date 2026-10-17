@@ -41,6 +41,10 @@ const state = {
   radiusCircle: null,
   isPickingLocation: false,
   showBestValuePanel: true,
+
+  // Multi-Provider State
+  enabledProviders: new Set(['parkplus_on_street', 'cpa_off_street', 'calgary_transit', 'impark', 'indigo', 'precise_parklink']),
+  providerCounts: {},
 };
 
 // UI Elements
@@ -72,6 +76,9 @@ const elements = {
   sidebarZoneNum: document.getElementById('sidebar-zone-num'),
   sidebarStallBadge: document.getElementById('sidebar-stall-badge'),
   sidebarStreet: document.getElementById('sidebar-street'),
+  sidebarProviderBadge: document.getElementById('sidebar-provider-badge'),
+  btnProviderAction: document.getElementById('btn-provider-action'),
+  btnProviderActionText: document.getElementById('btn-provider-action-text'),
   tabBtnOverview: document.getElementById('tab-btn-overview'),
   tabBtnRates: document.getElementById('tab-btn-rates'),
   tabBtnHistory: document.getElementById('tab-btn-history'),
@@ -84,6 +91,12 @@ const elements = {
   settingsSaveBtn: document.getElementById('settings-save-btn'),
   settingsResetBtn: document.getElementById('settings-reset-btn'),
   apiUrlInput: document.getElementById('api-url-input'),
+
+  // Multi-Provider Toolbar Elements
+  providerToolbarRow: document.getElementById('provider-toolbar-row'),
+  providerPillsContainer: document.getElementById('provider-pills-container'),
+  btnSelectAllProviders: document.getElementById('btn-select-all-providers'),
+  btnSelectNoneProviders: document.getElementById('btn-select-none-providers'),
 
   // Custom Locations & Price Filtration Elements
   filterToolbarRow: document.getElementById('filter-toolbar-row'),
@@ -1299,57 +1312,291 @@ function initMap() {
 }
 
 /**
- * Fetch latest data from ArcGIS FeatureServer
+/**
+ * Multi-Provider Data Fetching & Normalization Engine
  */
-async function fetchParkingData() {
-  if (state.isLoading) return;
-  
-  state.isLoading = true;
-  updateStatus('loading', 'Fetching latest parking data...');
-  if (elements.refreshIcon) elements.refreshIcon.classList.add('spin');
-  if (elements.refreshBtn) elements.refreshBtn.disabled = true;
 
+function getPolygonCentroid(latLngs) {
+  if (!latLngs || latLngs.length === 0) return [51.0447, -114.0719];
+  let sumLat = 0;
+  let sumLng = 0;
+  latLngs.forEach(pt => {
+    sumLat += pt[0];
+    sumLng += pt[1];
+  });
+  return [sumLat / latLngs.length, sumLng / latLngs.length];
+}
+
+function renderProviderPills() {
+  if (!elements.providerPillsContainer || !window.CpaProviders) return;
+  elements.providerPillsContainer.innerHTML = '';
+
+  const providers = window.CpaProviders.PROVIDERS;
+
+  Object.values(providers).forEach(p => {
+    const isEnabled = state.enabledProviders.has(p.id);
+    const count = state.providerCounts[p.id] || 0;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `provider-pill ${isEnabled ? 'active' : ''}`;
+    btn.style.setProperty('--provider-color', p.color);
+    btn.title = `Toggle ${p.name} (${count} locations)`;
+
+    btn.innerHTML = `
+      <span class="pill-dot" style="background-color: ${p.color}"></span>
+      <span class="truncate">${p.shortName}</span>
+      <span class="pill-count">${count}</span>
+    `;
+
+    btn.addEventListener('click', () => {
+      if (state.enabledProviders.has(p.id)) {
+        state.enabledProviders.delete(p.id);
+      } else {
+        state.enabledProviders.add(p.id);
+      }
+      renderProviderPills();
+      applyFilterAndRender();
+    });
+
+    elements.providerPillsContainer.appendChild(btn);
+  });
+}
+
+async function fetchOnStreetZones() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 35000);
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 35000);
-
     const response = await fetch(state.apiUrl, {
       signal: controller.signal,
       headers: { 'Accept': 'application/json, text/plain, */*' }
     });
     clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
-    }
-
+    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
     const json = await response.json();
-    if (json.error) {
-      throw new Error(`ArcGIS Error: ${json.error.message || JSON.stringify(json.error)}`);
-    }
-
+    if (json.error) throw new Error(json.error.message || 'ArcGIS error');
     const rawList = json.features && Array.isArray(json.features) ? json.features : [];
-    state.rawFeatures = rawList;
-    processFeatures(rawList);
-
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    updateStatus('success', `Synced at ${timeStr}`);
+    return parseOnStreetFeatures(rawList);
   } catch (err) {
-    console.error('Failed to fetch parking data:', err);
-    updateStatus('error', `Error: ${err.message}`);
-  } finally {
-    state.isLoading = false;
-    if (elements.refreshIcon) elements.refreshIcon.classList.remove('spin');
-    if (elements.refreshBtn) elements.refreshBtn.disabled = false;
+    clearTimeout(timeoutId);
+    console.warn('On-street fetch error:', err);
+    return [];
   }
 }
 
-/**
- * Process features into zone records
- */
-function processFeatures(features) {
+async function fetchOffStreetParkades() {
+  const url = 'https://data.calgary.ca/resource/ggxk-g2u3.json?$limit=500';
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+    const list = await response.json();
+    return parseOffStreetFeatures(list);
+  } catch (err) {
+    clearTimeout(timeoutId);
+    console.warn('Off-street parkades fetch warning:', err);
+    return [];
+  }
+}
+
+function fetchTransitParkAndRide() {
+  const stations = (window.CpaProviders && window.CpaProviders.TRANSIT_PARK_AND_RIDE_STATIONS) || [];
+  return stations.map((stn, idx) => ({
+    id: `transit-${stn.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+    providerId: 'calgary_transit',
+    facilityType: 'PARK_AND_RIDE',
+    zoneNumber: stn.name,
+    name: `${stn.name} Station Park & Ride`,
+    address: `${stn.name} CTrain Station, Calgary, AB`,
+    blockSide: 'Transit Lot',
+    zoneType: 'Transit Commuter Parking',
+    stallType: 'Surface & Multi-Storey Commuter Stalls',
+    zoneCapacity: stn.stalls,
+    segCapacity: stn.stalls,
+    zoneLength: 0,
+    segLength: 0,
+    status: 'Active',
+    brzName: `Calgary Transit (${stn.leg} Leg)`,
+    priceZone: 'Free Commuter',
+    maxTime: null,
+    enforceableTime: '0200-1100 (Mon-Fri Reserved Stalls)',
+    htmlRates: 'FREE after 11am Mon-Fri, Weekends & Statutory Holidays',
+    rateInfo: {
+      currentRate: 0,
+      isCurrentlyFree: true,
+      isNoParking: false,
+      currentSlotLabel: 'FREE after 11am & All Day Weekends/Holidays',
+      minRate: 0,
+      maxRate: 0,
+      intervals: [
+        { day: 'Mon-Fri after 11:00 AM', time: '11:00 AM to 2:00 AM', rate: '100% FREE' },
+        { day: 'Weekends & Statutory Holidays', time: 'All Day', rate: '100% FREE' },
+        { day: 'Mon-Fri 2:00 AM - 11:00 AM', time: 'Early Morning', rate: `Unmarked Free / Reserved (${stn.reservedFee})` }
+      ]
+    },
+    distanceToTarget: null,
+    walkingMinutes: null,
+    restrictTime: 'none',
+    restrictType: 'none',
+    noParking: null,
+    noStopping: null,
+    permitZone: 'Transit Permit Required 2am-11am for Reserved Stalls',
+    comments: `Dedicated Calgary Transit commuter facility with ~${stn.stalls} stalls. Free for all transit riders outside reserved morning hours.`,
+    paymentApp: 'Free Commuter Parking',
+    paymentUrl: 'https://www.calgarytransit.com/park-and-ride/',
+    operator: 'Calgary Transit',
+    lineSegments: [],
+    polygonCoords: null,
+    midpoint: [stn.lat, stn.lng],
+    polylineLayer: null,
+    markerLayer: null
+  }));
+}
+
+async function fetchCommercialLots() {
+  try {
+    const res = await fetch('data/commercial_parking.json');
+    if (!res.ok) return [];
+    const list = await res.json();
+    return list.map(item => ({
+      id: item.id,
+      providerId: item.providerId,
+      facilityType: item.facilityType,
+      zoneNumber: item.paymentCode || item.lotNumber,
+      name: item.name,
+      address: item.address,
+      blockSide: 'Off-Street',
+      zoneType: item.facilityType === 'PARKADE' ? 'Commercial Parkade' : 'Commercial Surface Lot',
+      stallType: item.stallType || 'Standard',
+      zoneCapacity: item.capacity || 100,
+      segCapacity: item.capacity || 100,
+      zoneLength: 0,
+      segLength: 0,
+      status: 'Active',
+      brzName: item.address.includes('SW') ? 'Downtown SW / Beltline' : 'Downtown Core',
+      priceZone: 'Commercial',
+      maxTime: null,
+      enforceableTime: '24/7 Pay Parking',
+      htmlRates: item.ratesSummary,
+      heightLimit: item.heightLimit,
+      amenities: item.amenities || [],
+      operator: item.operator,
+      paymentApp: item.paymentApp,
+      paymentUrl: item.paymentUrl,
+      ratesSummary: item.ratesSummary,
+      rateInfo: {
+        currentRate: 4.5,
+        isCurrentlyFree: false,
+        isNoParking: false,
+        currentSlotLabel: item.ratesSummary,
+        minRate: 3.5,
+        maxRate: 6.0,
+        intervals: [
+          { day: 'Commercial Daily/Hourly Schedule', time: 'Mon–Sun', rate: item.ratesSummary }
+        ]
+      },
+      distanceToTarget: null,
+      walkingMinutes: null,
+      restrictTime: 'none',
+      restrictType: 'none',
+      noParking: null,
+      noStopping: null,
+      permitZone: null,
+      comments: `Managed by ${item.operator}. Digital pay via ${item.paymentApp}.`,
+      lineSegments: [],
+      polygonCoords: null,
+      midpoint: [item.coordinates[1], item.coordinates[0]],
+      polylineLayer: null,
+      markerLayer: null
+    }));
+  } catch (err) {
+    console.warn('Commercial lots fetch warning:', err);
+    return [];
+  }
+}
+
+function parseOffStreetFeatures(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((item, idx) => {
+    let polygonCoords = null;
+    let midpoint = [51.0447, -114.0719];
+
+    if (item.multipolygon && item.multipolygon.coordinates) {
+      const geomType = item.multipolygon.type;
+      let ring = null;
+      if (geomType === 'MultiPolygon' && item.multipolygon.coordinates[0]) {
+        ring = item.multipolygon.coordinates[0][0];
+      } else if (geomType === 'Polygon' && item.multipolygon.coordinates[0]) {
+        ring = item.multipolygon.coordinates[0];
+      }
+      if (Array.isArray(ring) && ring.length > 0) {
+        polygonCoords = ring.map(pt => [pt[1], pt[0]]);
+        midpoint = getPolygonCentroid(polygonCoords);
+      }
+    }
+
+    const isParkade = (item.parking_type || '').toUpperCase() === 'PARKADE';
+    const lotNum = item.lot_num || String(idx + 8000);
+    const lotName = item.lot_name || `City Lot ${lotNum}`;
+    const address = item.address_desc || `${lotName}, Calgary, AB`;
+
+    return {
+      id: `cpa-off-${item.globalid || lotNum || idx}`,
+      providerId: 'cpa_off_street',
+      facilityType: isParkade ? 'PARKADE' : 'SURFACE LOT',
+      zoneNumber: lotNum,
+      name: lotName,
+      address: address,
+      blockSide: 'Off-Street',
+      zoneType: isParkade ? 'Municipal Parkade' : 'Municipal Surface Lot',
+      stallType: item.stall_type || (isParkade ? 'Parkade Stalls' : 'Surface Stalls'),
+      zoneCapacity: isParkade ? 350 : 120,
+      segCapacity: isParkade ? 350 : 120,
+      zoneLength: 0,
+      segLength: 0,
+      status: 'Active',
+      brzName: 'City of Calgary',
+      priceZone: isParkade ? 'Parkade Tier' : 'Surface Tier',
+      maxTime: null,
+      enforceableTime: '24/7 Pay Parking',
+      htmlRates: isParkade ? 'Daytime: $3.50-$4.50/hr ($23 Max) | Evenings & Weekends: $1/half hr ($4 Max)' : 'Daytime: $2.50-$3.50/hr | Evenings/Weekends: $1.00/half hr',
+      rateInfo: {
+        currentRate: isParkade ? 3.5 : 2.5,
+        isCurrentlyFree: false,
+        isNoParking: false,
+        currentSlotLabel: isParkade ? 'Daytime: $4/half hr ($23 Max) | Evenings/Weekends: $1/half hr ($4 Max)' : 'Standard Hourly & Daily Rates',
+        minRate: 1.0,
+        maxRate: isParkade ? 4.5 : 3.5,
+        intervals: [
+          { day: 'Daytime - Weekdays (6 AM - 6 PM)', time: 'Daytime', rate: isParkade ? '$4 per 1/2 hr ($23 Max)' : '$3 per 1/2 hr' },
+          { day: 'Evenings (6 PM - 6 AM)', time: 'Evening', rate: '$1 per 1/2 hr ($4 Max)' },
+          { day: 'Weekends & Holidays', time: 'All Day', rate: '$1 per 1/2 hr ($4 Max)' }
+        ]
+      },
+      distanceToTarget: null,
+      walkingMinutes: null,
+      restrictTime: 'none',
+      restrictType: 'none',
+      noParking: null,
+      noStopping: null,
+      permitZone: null,
+      comments: 'City of Calgary municipal facility. ParkPlus Pay machines and barrier access.',
+      paymentApp: 'ParkPlus / Onsite',
+      paymentUrl: item.home_page?.url || 'https://www.calgaryparking.com/find-parking/lots.html',
+      operator: 'City of Calgary / Calgary Parking',
+      lineSegments: [],
+      polygonCoords: polygonCoords,
+      midpoint: midpoint,
+      polylineLayer: null,
+      markerLayer: null
+    };
+  });
+}
+
+function parseOnStreetFeatures(features) {
   const zones = [];
-  const brzSet = new Set();
 
   features.forEach((feat, index) => {
     const attrs = feat.attributes || {};
@@ -1372,13 +1619,14 @@ function processFeatures(features) {
     const midpoint = getPolylineMidpoint(mainLatLngs);
 
     const brz = (attrs.BRZ_NAME || '').trim();
-    if (brz) brzSet.add(brz);
-
     const rateInfo = parseZoneRateSchedule(attrs.HTML_ZONE_RATE || '', attrs.ENFORCEABLE_TIME || '');
 
     const zoneObj = {
       id: attrs.OBJECTID || index,
+      providerId: 'parkplus_on_street',
+      facilityType: 'ON_STREET',
       zoneNumber: attrs.PARKING_ZONE !== undefined && attrs.PARKING_ZONE !== null ? String(attrs.PARKING_ZONE) : 'N/A',
+      name: `Zone #${attrs.PARKING_ZONE || 'N/A'}`,
       address: (attrs.ADDRESS_DESC || 'Unknown Location').trim(),
       blockSide: (attrs.BLOCK_SIDE || '').trim(),
       zoneType: (attrs.ZONE_TYPE || 'Parking Zone').trim(),
@@ -1404,18 +1652,83 @@ function processFeatures(features) {
       comments: attrs.COMMENTS || null,
       globalId: attrs.GLOBALID || '',
       lineSegments,
+      polygonCoords: null,
       midpoint,
       polylineLayer: null,
       markerLayer: null,
+      paymentApp: 'ParkPlus (MyParking)',
+      paymentUrl: 'https://www.calgaryparking.com/parkplus',
+      operator: 'Calgary Parking Authority'
     };
 
     zones.push(zoneObj);
   });
 
-  state.parsedZones = zones;
-  populateBrzFilter(Array.from(brzSet).sort());
-  applyFilterAndRender();
-  recordPriceSnapshot(zones);
+  return zones;
+}
+
+/**
+ * Fetch latest data from all parking providers in parallel
+ */
+async function fetchParkingData() {
+  if (state.isLoading) return;
+  
+  state.isLoading = true;
+  updateStatus('loading', 'Fetching multi-provider parking data...');
+  if (elements.refreshIcon) elements.refreshIcon.classList.add('spin');
+  if (elements.refreshBtn) elements.refreshBtn.disabled = true;
+
+  try {
+    const results = await Promise.allSettled([
+      fetchOnStreetZones(),
+      fetchOffStreetParkades(),
+      Promise.resolve(fetchTransitParkAndRide()),
+      fetchCommercialLots()
+    ]);
+
+    const onStreetZones = results[0].status === 'fulfilled' ? results[0].value : [];
+    const offStreetZones = results[1].status === 'fulfilled' ? results[1].value : [];
+    const transitZones = results[2].status === 'fulfilled' ? results[2].value : [];
+    const commercialZones = results[3].status === 'fulfilled' ? results[3].value : [];
+
+    const allZones = [
+      ...onStreetZones,
+      ...offStreetZones,
+      ...transitZones,
+      ...commercialZones
+    ];
+
+    state.rawFeatures = onStreetZones;
+    state.parsedZones = allZones;
+
+    // Calculate provider counts
+    const counts = {};
+    allZones.forEach(z => {
+      counts[z.providerId] = (counts[z.providerId] || 0) + 1;
+    });
+    state.providerCounts = counts;
+
+    // Extract BRZ / Area list
+    const brzSet = new Set();
+    allZones.forEach(z => {
+      if (z.brzName && z.brzName !== 'None') brzSet.add(z.brzName);
+    });
+
+    populateBrzFilter(Array.from(brzSet).sort());
+    renderProviderPills();
+    applyFilterAndRender();
+    if (onStreetZones.length > 0) recordPriceSnapshot(onStreetZones);
+
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    updateStatus('success', `Synced ${allZones.length.toLocaleString()} locations across Calgary at ${timeStr}`);
+  } catch (err) {
+    console.error('Failed to fetch parking data:', err);
+    updateStatus('error', `Error: ${err.message}`);
+  } finally {
+    state.isLoading = false;
+    if (elements.refreshIcon) elements.refreshIcon.classList.remove('spin');
+    if (elements.refreshBtn) elements.refreshBtn.disabled = false;
+  }
 }
 
 function populateBrzFilter(brzList) {
@@ -1453,15 +1766,24 @@ function applyFilterAndRender() {
     }
   });
 
-  // 2. Filter zones by area, search, radius, and price threshold
+  // 2. Filter zones by area, search, radius, price threshold, and provider
   state.filteredZones = state.parsedZones.filter(z => {
+    // Multi-Provider Filter
+    if (z.providerId && !state.enabledProviders.has(z.providerId)) {
+      return false;
+    }
+
     // Area (BRZ) Filter
     if (brzFilter !== 'ALL' && z.brzName !== brzFilter) return false;
 
     // Search Query Filter
     if (query) {
+      const provider = window.CpaProviders ? window.CpaProviders.getProvider(z.providerId) : null;
       const match = z.zoneNumber.toLowerCase().includes(query) ||
                     z.address.toLowerCase().includes(query) ||
+                    (z.name && z.name.toLowerCase().includes(query)) ||
+                    (z.operator && z.operator.toLowerCase().includes(query)) ||
+                    (provider && (provider.name.toLowerCase().includes(query) || provider.shortName.toLowerCase().includes(query))) ||
                     z.brzName.toLowerCase().includes(query);
       if (!match) return false;
     }
@@ -1544,7 +1866,7 @@ function renderBestValuePanel() {
       <div class="flex items-center justify-between gap-1">
         <div class="flex items-center gap-1.5">
           <span class="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-[10px]">#${idx + 1}</span>
-          <span class="font-bold text-foreground text-xs">Zone ${zone.zoneNumber}</span>
+          <span class="font-bold text-foreground text-xs">${zone.name || 'Zone ' + zone.zoneNumber}</span>
         </div>
         ${rateBadge}
       </div>
@@ -1582,7 +1904,11 @@ function zoomToZone(zone) {
   }
 }
 
-function getZoneColor(priceZone) {
+function getZoneColor(priceZone, providerId) {
+  if (providerId && window.CpaProviders) {
+    const p = window.CpaProviders.getProvider(providerId);
+    if (p && p.id !== 'parkplus_on_street') return p.color;
+  }
   const pz = String(priceZone).toLowerCase();
   if (pz === '1' || pz === '2') return '#3b82f6';
   if (pz === '3' || pz === '4' || pz.startsWith('4')) return '#06b6d4';
@@ -1600,22 +1926,59 @@ function renderMapFeatures() {
   const bounds = [];
 
   state.filteredZones.forEach(zone => {
-    // 1. Polyline Shapes
-    const polylineColor = getZoneColor(zone.priceZone);
-    const polylines = [];
+    const provider = window.CpaProviders ? window.CpaProviders.getProvider(zone.providerId) : null;
+    const shapeLayers = [];
 
-    zone.lineSegments.forEach(segment => {
-      const poly = L.polyline(segment, {
-        color: polylineColor,
-        weight: 5,
-        opacity: 0.85,
+    // 1A. On-Street Polylines
+    if (zone.lineSegments && zone.lineSegments.length > 0) {
+      const polylineColor = getZoneColor(zone.priceZone, zone.providerId);
+      zone.lineSegments.forEach(segment => {
+        const poly = L.polyline(segment, {
+          color: polylineColor,
+          weight: 5,
+          opacity: 0.85,
+          lineCap: 'round',
+          lineJoin: 'round',
+        });
+
+        poly.on('mouseover', () => poly.setStyle({ weight: 8, opacity: 1 }));
+        poly.on('mouseout', () => {
+          if (state.selectedZone !== zone) poly.setStyle({ weight: 5, opacity: 0.85 });
+        });
+
+        poly.on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          selectZone(zone, false);
+          if (zone.markerLayer) {
+            zone.markerLayer.openPopup();
+          }
+        });
+
+        poly.bindTooltip(`<strong>${zone.name || 'Zone ' + zone.zoneNumber}</strong><br>${zone.address}`, {
+          sticky: true,
+          className: 'zone-tooltip'
+        });
+
+        shapeLayers.push(poly);
+        if (state.showShapes) elements.polylineLayer.addLayer(poly);
+      });
+    }
+
+    // 1B. Off-Street Polygon Boundaries (City Parkades & Lots)
+    if (zone.polygonCoords && zone.polygonCoords.length > 0) {
+      const polygonColor = provider ? provider.color : '#2563eb';
+      const poly = L.polygon(zone.polygonCoords, {
+        color: polygonColor,
+        weight: 2.5,
+        fillColor: polygonColor,
+        fillOpacity: 0.25,
         lineCap: 'round',
-        lineJoin: 'round',
+        lineJoin: 'round'
       });
 
-      poly.on('mouseover', () => poly.setStyle({ weight: 8, opacity: 1 }));
+      poly.on('mouseover', () => poly.setStyle({ weight: 4.5, fillOpacity: 0.5 }));
       poly.on('mouseout', () => {
-        if (state.selectedZone !== zone) poly.setStyle({ weight: 5, opacity: 0.85 });
+        if (state.selectedZone !== zone) poly.setStyle({ weight: 2.5, fillOpacity: 0.25 });
       });
 
       poly.on('click', (e) => {
@@ -1626,31 +1989,32 @@ function renderMapFeatures() {
         }
       });
 
-      poly.bindTooltip(`<strong>Zone ${zone.zoneNumber}</strong><br>${zone.address}`, {
+      poly.bindTooltip(`<strong>${zone.name || 'Zone ' + zone.zoneNumber}</strong><br>${zone.address}<br><span class="text-xs font-semibold">${provider ? provider.name : ''}</span>`, {
         sticky: true,
         className: 'zone-tooltip'
       });
 
-      polylines.push(poly);
+      shapeLayers.push(poly);
       if (state.showShapes) elements.polylineLayer.addLayer(poly);
-    });
-    zone.polylineLayer = polylines;
+    }
 
-    // 2. Midpoint Pin Marker
-    const customPinIcon = L.divIcon({
-      className: 'custom-pin-marker',
-      html: `
-        <div class="pin-bubble" title="Zone ${zone.zoneNumber}">
-          <span>P</span>
-        </div>
-      `,
-      iconSize: [26, 26],
-      iconAnchor: [13, 26],
-      popupAnchor: [0, -26]
-    });
+    zone.polylineLayer = shapeLayers;
+
+    // 2. Midpoint Pin Marker with Provider Logo
+    const isSelected = state.selectedZone === zone;
+    const tooltipTitle = `${zone.name || 'Zone ' + zone.zoneNumber} - ${zone.address}`;
+    const customPinIcon = window.CpaProviders && window.CpaProviders.createProviderPinIcon
+      ? window.CpaProviders.createProviderPinIcon(zone.providerId, tooltipTitle, isSelected)
+      : L.divIcon({
+          className: 'custom-pin-marker',
+          html: `<div class="pin-bubble" title="${tooltipTitle}"><span>P</span></div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 28],
+          popupAnchor: [0, -28]
+        });
 
     const marker = L.marker(zone.midpoint, { icon: customPinIcon });
-    marker.bindPopup(createPopupHtml(zone), { maxWidth: 290 });
+    marker.bindPopup(createPopupHtml(zone), { maxWidth: 300 });
 
     marker.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
@@ -1678,9 +2042,11 @@ function renderMapFeatures() {
 }
 
 /**
- * Popup HTML (shadcn Popover card style with Price & Walking distance)
+ * Popup HTML with Provider Badge, Rates, Distance & Direct Action Link
  */
 function createPopupHtml(zone) {
+  const provider = window.CpaProviders ? window.CpaProviders.getProvider(zone.providerId) : null;
+  const providerBadge = window.CpaProviders ? window.CpaProviders.renderProviderBadge(zone.providerId, { compact: true }) : '';
   const rateBadge = getPriceBadgeHtml(zone.rateInfo, state.rateMode);
   const distanceHtml = zone.distanceToTarget !== null ? `
     <div class="flex items-center gap-1.5 text-xs font-semibold text-primary bg-primary/5 rounded-md px-2 py-1 border border-primary/20">
@@ -1689,28 +2055,42 @@ function createPopupHtml(zone) {
     </div>
   ` : '';
 
+  const zoneTitle = zone.name || `Zone #${zone.zoneNumber}`;
+
   return `
-    <div class="p-3.5 flex flex-col gap-2 min-w-[240px]">
+    <div class="p-3.5 flex flex-col gap-2 min-w-[250px]">
       <div class="flex items-center justify-between gap-2">
-        <span class="inline-flex items-center rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-bold text-primary">
-          Zone #${zone.zoneNumber}
-        </span>
+        ${providerBadge}
         ${rateBadge}
       </div>
-      <div class="font-semibold text-xs text-foreground leading-snug">${zone.address}</div>
+      <div class="font-bold text-xs text-foreground leading-snug">${zoneTitle}</div>
+      <div class="text-[11px] text-muted-foreground">${zone.address}</div>
       ${distanceHtml}
       <div class="text-[11px] text-muted-foreground flex flex-col gap-0.5 border-t border-border pt-1.5 mt-0.5">
-        <div><strong>Live Status:</strong> ${zone.rateInfo?.currentSlotLabel || 'Check signage'}</div>
-        <div><strong>Capacity:</strong> ${zone.zoneCapacity} stalls (${zone.segLength}m) • ${zone.stallType}</div>
-        <div><strong>Area:</strong> ${zone.brzName}</div>
+        <div><strong>Status / Rates:</strong> ${zone.rateInfo?.currentSlotLabel || 'Check signage'}</div>
+        <div><strong>Capacity:</strong> ${zone.zoneCapacity} stalls • ${zone.stallType || 'Standard'}</div>
+        <div><strong>Operator:</strong> ${provider ? provider.operator : 'Calgary Parking'}</div>
       </div>
-      <button 
-        onclick="window.cpaApp.openZoneDetails('${zone.id}')"
-        class="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors"
-      >
-        <span>Full Details &amp; Rates</span>
-        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-      </button>
+      <div class="flex flex-col gap-1.5 mt-1">
+        <button 
+          onclick="window.cpaApp.openZoneDetails('${zone.id}')"
+          class="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors"
+        >
+          <span>Full Details &amp; Rates</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        ${zone.paymentUrl ? `
+          <a 
+            href="${zone.paymentUrl}" 
+            target="_blank" 
+            rel="noopener"
+            class="inline-flex w-full items-center justify-center gap-1 rounded-md border border-input bg-background hover:bg-accent px-2.5 py-1 text-[11px] font-semibold text-foreground transition-colors"
+          >
+            <span>${zone.paymentApp ? 'Open ' + zone.paymentApp : 'Provider Website'}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </a>
+        ` : ''}
+      </div>
     </div>
   `;
 }
@@ -1811,8 +2191,14 @@ function formatHtmlRates(rawHtml) {
  * Render Zone Details into Sheet
  */
 function renderDetailsSheet(zone) {
-  elements.sidebarZoneNum.textContent = `Zone #${zone.zoneNumber}`;
-  elements.sidebarStallBadge.textContent = zone.stallType || 'Parallel';
+  const provider = window.CpaProviders ? window.CpaProviders.getProvider(zone.providerId) : null;
+  if (elements.sidebarProviderBadge && window.CpaProviders) {
+    elements.sidebarProviderBadge.innerHTML = window.CpaProviders.renderProviderBadge(zone.providerId);
+  }
+  elements.sidebarZoneNum.textContent = zone.name && zone.name !== `Zone #${zone.zoneNumber}` 
+    ? zone.name 
+    : `Zone #${zone.zoneNumber}`;
+  elements.sidebarStallBadge.textContent = zone.stallType || 'Standard';
   elements.sidebarStreet.textContent = zone.address;
 
   // Max Stay calculation
@@ -1824,27 +2210,52 @@ function renderDetailsSheet(zone) {
   }
 
   const sideMap = { 'N': 'North', 'S': 'South', 'E': 'East', 'W': 'West' };
-  const blockSideName = sideMap[zone.blockSide] || zone.blockSide || 'Both';
+  const blockSideName = sideMap[zone.blockSide] || zone.blockSide || 'Off-Street Facility';
 
   // Navigation link
   elements.btnGmapsLink.href = `https://www.google.com/maps/search/?api=1&query=${zone.midpoint[0]},${zone.midpoint[1]}`;
+
+  // Provider Action Button
+  if (elements.btnProviderAction && elements.btnProviderActionText) {
+    if (zone.paymentUrl) {
+      elements.btnProviderAction.classList.remove('hidden');
+      elements.btnProviderAction.classList.add('inline-flex');
+      elements.btnProviderAction.href = zone.paymentUrl;
+      if (zone.providerId === 'impark') {
+        elements.btnProviderActionText.textContent = `Pay via hangTag (${zone.zoneNumber})`;
+      } else if (zone.providerId === 'indigo') {
+        elements.btnProviderActionText.textContent = `Reserve / Pay on Indigo Neo`;
+      } else if (zone.providerId === 'precise_parklink') {
+        elements.btnProviderActionText.textContent = `Pay via Parkedin (${zone.zoneNumber})`;
+      } else if (zone.providerId === 'calgary_transit') {
+        elements.btnProviderActionText.textContent = `Calgary Transit Park & Ride Info`;
+      } else if (zone.providerId === 'cpa_off_street') {
+        elements.btnProviderActionText.textContent = `Official Rates on CalgaryParking.com`;
+      } else {
+        elements.btnProviderActionText.textContent = `Pay on ParkPlus / MyParking`;
+      }
+    } else {
+      elements.btnProviderAction.classList.add('hidden');
+      elements.btnProviderAction.classList.remove('inline-flex');
+    }
+  }
 
   // 1. Overview Tab Content
   const overviewHtml = `
     <div class="flex flex-col gap-3">
       
-      <!-- Primary Card: Address & Block -->
+      <!-- Primary Card: Address & Facility Info -->
       <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-2">
-        <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Location &amp; Block</span>
+        <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Location &amp; Facility</span>
         <div class="text-sm font-semibold text-foreground leading-snug">${zone.address}</div>
         <div class="grid grid-cols-2 gap-2 mt-1">
           <div class="rounded-md border border-border bg-muted/40 p-2 text-xs">
-            <span class="text-muted-foreground block text-[10px] uppercase">Side of Street</span>
-            <span class="font-semibold text-foreground">${blockSideName} (${zone.blockSide || 'N/A'})</span>
+            <span class="text-muted-foreground block text-[10px] uppercase">Facility Type</span>
+            <span class="font-semibold text-foreground truncate block">${zone.zoneType || 'Parking Facility'}</span>
           </div>
           <div class="rounded-md border border-border bg-muted/40 p-2 text-xs">
-            <span class="text-muted-foreground block text-[10px] uppercase">Area (BRZ)</span>
-            <span class="font-semibold text-foreground truncate block">${zone.brzName}</span>
+            <span class="text-muted-foreground block text-[10px] uppercase">Operator</span>
+            <span class="font-semibold text-foreground truncate block">${provider ? provider.operator : 'Calgary Parking'}</span>
           </div>
         </div>
       </div>
@@ -1875,22 +2286,44 @@ function renderDetailsSheet(zone) {
           <span class="text-base font-bold text-foreground">${zone.zoneCapacity} <span class="text-xs font-normal text-muted-foreground">stalls</span></span>
         </div>
         <div class="rounded-xl border border-border bg-card p-3 shadow-sm flex flex-col gap-1">
-          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Max Stay</span>
-          <span class="text-base font-bold text-foreground">${maxStayStr}</span>
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Stall Type</span>
+          <span class="text-xs font-bold text-foreground truncate">${zone.stallType || 'Standard'}</span>
         </div>
         <div class="rounded-xl border border-border bg-card p-3 shadow-sm flex flex-col gap-1">
-          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Zone Length</span>
-          <span class="text-base font-bold text-foreground">${zone.zoneLength} <span class="text-xs font-normal text-muted-foreground">meters</span></span>
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Area / BRZ</span>
+          <span class="text-xs font-bold text-foreground truncate">${zone.brzName || 'Calgary'}</span>
         </div>
         <div class="rounded-xl border border-border bg-card p-3 shadow-sm flex flex-col gap-1">
-          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Price Tier</span>
-          <span class="text-base font-bold text-foreground">Tier ${zone.priceZone}</span>
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Category</span>
+          <span class="text-xs font-bold text-foreground truncate">${provider ? provider.shortName : 'Municipal'}</span>
         </div>
       </div>
 
+      ${zone.amenities && zone.amenities.length > 0 ? `
+      <!-- Amenities & Features Card -->
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-2">
+        <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Amenities &amp; Features</span>
+        <div class="flex flex-wrap gap-1.5">
+          ${zone.amenities.map(a => `<span class="inline-flex items-center rounded-md border border-border bg-muted/60 px-2 py-0.5 text-[11px] font-medium text-foreground">${a}</span>`).join('')}
+        </div>
+        ${zone.heightLimit ? `<div class="text-[11px] text-muted-foreground mt-1">Vehicle Clearance Limit: <strong class="text-foreground">${zone.heightLimit}</strong></div>` : ''}
+      </div>` : ''}
+
+      ${zone.providerId === 'calgary_transit' ? `
+      <!-- Calgary Transit Commuter Policy Card -->
+      <div class="rounded-xl border border-red-500/30 bg-red-500/10 p-4 shadow-sm flex flex-col gap-1.5 text-xs">
+        <span class="font-bold text-red-600 dark:text-red-400 uppercase text-[10px] tracking-wider">Calgary Transit Commuter Policy</span>
+        <p class="text-foreground leading-relaxed">
+          Park and Ride lots are <strong>100% FREE</strong> for all transit riders after 11:00 AM on weekdays, and completely free all day on Saturdays, Sundays, and statutory holidays!
+        </p>
+        <p class="text-muted-foreground text-[11px]">
+          Reserved permit stalls apply between 2:00 AM and 11:00 AM Monday through Friday ($85/mo).
+        </p>
+      </div>` : ''}
+
       <!-- Enforceable Hours Card -->
       <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-1.5">
-        <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Enforceable Parking Hours</span>
+        <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Operating / Enforceable Hours</span>
         <div class="flex items-center gap-2 text-xs font-medium text-foreground">
           <i data-lucide="clock" class="h-4 w-4 text-muted-foreground shrink-0"></i>
           <span>${formatEnforceableTime(zone.enforceableTime)}</span>
@@ -2322,10 +2755,30 @@ function setupEventListeners() {
     });
   }
 
+  // Multi-Provider Select All & Clear
+  if (elements.btnSelectAllProviders) {
+    elements.btnSelectAllProviders.addEventListener('click', () => {
+      if (window.CpaProviders) {
+        Object.keys(window.CpaProviders.PROVIDERS).forEach(id => state.enabledProviders.add(id));
+        renderProviderPills();
+        applyFilterAndRender();
+      }
+    });
+  }
+
+  if (elements.btnSelectNoneProviders) {
+    elements.btnSelectNoneProviders.addEventListener('click', () => {
+      state.enabledProviders.clear();
+      renderProviderPills();
+      applyFilterAndRender();
+    });
+  }
+
   // Reset Filters Button
   if (elements.btnResetFilters) {
     elements.btnResetFilters.addEventListener('click', () => resetAllFilters());
   }
+
 
   // Toggle Recommendations Panel Button
   if (elements.btnToggleRecommendations) {
@@ -2509,6 +2962,11 @@ function resetAllFilters() {
   if (elements.searchClearBtn) elements.searchClearBtn.classList.add('hidden');
 
   setActiveLocation('NONE');
+
+  if (window.CpaProviders) {
+    Object.keys(window.CpaProviders.PROVIDERS).forEach(id => state.enabledProviders.add(id));
+    renderProviderPills();
+  }
 }
 
 // Global API for inline onclicks
