@@ -184,14 +184,13 @@ function initMap() {
     attribution: '&copy; OpenStreetMap &copy; CARTO',
   });
 
-  // Default layer based on theme
-  const initialLayer = state.theme === 'dark' ? elements.tileLayers.dark : elements.tileLayers.positron;
-  initialLayer.addTo(elements.map);
+  // Default layer: OpenStreetMap Standard
+  elements.tileLayers.osm.addTo(elements.map);
 
   L.control.layers({
+    'OpenStreetMap Standard': elements.tileLayers.osm,
     'Clean Street Map (Positron)': elements.tileLayers.positron,
     'Night Map (Dark)': elements.tileLayers.dark,
-    'OpenStreetMap Standard': elements.tileLayers.osm,
   }, null, { position: 'topright' }).addTo(elements.map);
 
   elements.polylineLayer = L.featureGroup().addTo(elements.map);
