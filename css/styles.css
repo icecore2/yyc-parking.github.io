@@ -405,3 +405,49 @@ body {
   transform: translateY(-1px);
 }
 
+/* ==========================================================================
+   Chart Components & Day Selectors (shadcn style)
+   ========================================================================== */
+.chart-container-box {
+  position: relative;
+  width: 100%;
+  height: 180px;
+}
+
+.day-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  border: 1px solid hsl(var(--border));
+  background-color: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  transition: all 0.15s ease;
+}
+
+.day-pill-btn:hover {
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--accent));
+}
+
+.day-pill-btn.active {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: hsl(var(--primary));
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.history-snapshot-item {
+  transition: background-color 0.15s ease;
+}
+
+.history-snapshot-item:hover {
+  background-color: hsl(var(--muted) / 0.6);
+}
+
+

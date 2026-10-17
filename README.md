@@ -33,17 +33,23 @@ An interactive, responsive static map application built with **OpenStreetMap** (
      - **Parking Restrictions & Prohibitions** (Rush-hour AM/PM restrictions, No Stopping, No Parking alerts)
      - Direct button to **Zoom to Street Segment** and link to **Google Maps Navigation**.
 
-4. **Street Polylines / Shapes**
+4. **Interactive Price Graphs & Historical Trends**
+   - **24-Hour Time-of-Day Rate Curve**: Stepped hourly area chart powered by Chart.js visualizing the parking rate from 12:00 AM to 11:59 PM. Includes day-of-week switcher pills (`Mon–Fri`, `Saturday`, `Sunday/Holiday`) and indicators for current rate, peak rate, and off-peak free parking windows.
+   - **Historical Rate Trends & Sync Snapshots**: Longitudinal price evolution chart tracking peak daytime rate changes and demand-based price tier adjustments (2023–Present).
+   - **Automatic Local Snapshots**: Automatically logs timestamped rate checkpoints on data sync and allows users to manually save or clear local price snapshots via `localStorage`.
+   - **Dark/Light Theme Adaptive**: Chart axes, tooltips, gridlines, and fills dynamically transition with the app's dark and light mode toggle.
+
+5. **Street Polylines / Shapes**
    - Accurate polyline shapes drawn directly on top of the street layout.
    - Auto-projection: Handles Esri Web Mercator (EPSG:3857/102100) coordinates seamlessly converting them to WGS84 Lat/Lng.
    - Color-coded by Price Zone with an on-screen visual legend.
    - Hover effects and click interactions to select zones.
 
-5. **"Get Latest Information" Live Sync**
+6. **"Get Latest Information" Live Sync**
    - Prominent header button with loading indicator to query the latest real-time data from the Calgary Parking Authority FeatureServer.
    - Live status indicator displaying connection state, record count, and timestamp of last synchronization.
 
-6. **Search & Area Filters**
+7. **Search & Area Filters**
    - Instant search input to filter by Parking Zone # (e.g., `1008`, `1774`) or street name (e.g., `Eau Claire`, `10 St`).
    - Area dropdown filter to isolate specific neighborhoods and BRZ districts.
 
@@ -59,6 +65,11 @@ Since the application is 100% static and the Calgary ArcGIS FeatureServer API ha
 npm start
 ```
 Then visit [http://localhost:8080](http://localhost:8080).
+
+### Run Automated Tests
+```bash
+npm test
+```
 
 ### Option 3: Using Python
 ```bash

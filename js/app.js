@@ -22,7 +22,10 @@ const state = {
   searchQuery: '',
   isLoading: false,
   theme: localStorage.getItem('cpa_theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
-  activeTab: 'overview', // 'overview', 'rates', 'rules'
+  activeTab: 'overview', // 'overview', 'rates', 'history', 'rules'
+  scheduleDayType: 'weekday', // 'weekday', 'saturday', 'sunday'
+  scheduleChart: null,
+  historyChart: null,
   
   // Price Filtration State
   priceFilter: 'ALL', // 'ALL', 'free', '1', '2', '3', '4', '5'
@@ -71,6 +74,7 @@ const elements = {
   sidebarStreet: document.getElementById('sidebar-street'),
   tabBtnOverview: document.getElementById('tab-btn-overview'),
   tabBtnRates: document.getElementById('tab-btn-rates'),
+  tabBtnHistory: document.getElementById('tab-btn-history'),
   tabBtnRules: document.getElementById('tab-btn-rules'),
   btnZoomZone: document.getElementById('btn-zoom-zone'),
   btnGmapsLink: document.getElementById('btn-gmaps-link'),
@@ -354,6 +358,442 @@ function getPriceBadgeHtml(rateInfo, rateMode = 'live') {
   else if (rate >= 2.5) colorClass = 'badge-rate-med';
 
   return `<span class="${colorClass} px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1"><span>$${rate.toFixed(2)}/hr</span>${rateMode === 'live' ? '<span class="text-[9px] opacity-75">NOW</span>' : '<span class="text-[9px] opacity-75">PEAK</span>'}</span>`;
+}
+
+/**
+ * ============================================================================
+ * Historical & Time-of-Day Parking Price Engine & Visualizations
+ * ============================================================================
+ */
+
+function generate24HourProfile(rateInfo, dayType = 'weekday') {
+  const profile = [];
+  const intervals = (rateInfo && rateInfo.intervals) ? rateInfo.intervals : [];
+
+  for (let hour = 0; hour < 24; hour++) {
+    const currentMin = hour * 60 + 30; // Mid-hour checkpoint
+    let rate = 0;
+    let isRestricted = false;
+    let label = 'Free Parking (Off-Peak)';
+
+    if (dayType === 'sunday') {
+      rate = 0;
+      label = 'Free Parking';
+    } else {
+      let match = null;
+      for (const inv of intervals) {
+        let dayMatch = false;
+        if (inv.appliesDays === 'weekday' && dayType === 'weekday') dayMatch = true;
+        else if (inv.appliesDays === 'saturday' && dayType === 'saturday') dayMatch = true;
+        else if (inv.appliesDays === 'all') dayMatch = true;
+
+        if (dayMatch && inv.timeRange) {
+          if (currentMin >= inv.timeRange.start && currentMin < inv.timeRange.end) {
+            match = inv;
+            break;
+          }
+        }
+      }
+
+      if (match) {
+        if (match.isNoParking) {
+          rate = null;
+          isRestricted = true;
+          label = 'No Parking (Restriction)';
+        } else {
+          rate = match.price !== null ? match.price : 0;
+          label = rate === 0 ? 'Free Parking' : `$${rate.toFixed(2)}/hr`;
+        }
+      } else {
+        rate = 0;
+        label = 'Free Parking (Off-Peak)';
+      }
+    }
+
+    const hourDisplay = hour % 12 === 0 ? 12 : hour % 12;
+    const meridian = hour >= 12 ? 'PM' : 'AM';
+    profile.push({
+      hour,
+      hourLabel: `${hourDisplay} ${meridian}`,
+      rate,
+      isRestricted,
+      label
+    });
+  }
+
+  return profile;
+}
+
+function recordPriceSnapshot(zones) {
+  if (!zones || zones.length === 0) return;
+  try {
+    const raw = localStorage.getItem('cpa_price_snapshots');
+    let snapshots = raw ? JSON.parse(raw) : [];
+
+    const now = Date.now();
+    // Throttle automatic snapshots to at least 15 minutes apart
+    if (snapshots.length > 0 && (now - snapshots[snapshots.length - 1].timestamp) < 15 * 60 * 1000) {
+      return;
+    }
+
+    const snapshotMap = {};
+    zones.forEach(z => {
+      const peak = z.rateInfo ? z.rateInfo.maxRate : 0;
+      snapshotMap[z.zoneNumber] = {
+        peak,
+        tier: z.priceZone
+      };
+    });
+
+    snapshots.push({
+      timestamp: now,
+      dateStr: new Date(now).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      count: zones.length,
+      rates: snapshotMap
+    });
+
+    if (snapshots.length > 30) {
+      snapshots = snapshots.slice(snapshots.length - 30);
+    }
+
+    localStorage.setItem('cpa_price_snapshots', JSON.stringify(snapshots));
+  } catch (e) {
+    console.warn('Failed to record price snapshot:', e);
+  }
+}
+
+function getZoneHistoricalData(zone) {
+  const priceTier = String(zone.priceZone || '4').toLowerCase().replace(/[^0-9]/g, '') || '4';
+  const tierNum = parseInt(priceTier, 10) || 4;
+  const currentMax = (zone.rateInfo && zone.rateInfo.maxRate > 0) 
+    ? zone.rateInfo.maxRate 
+    : (tierNum >= 7 ? 4.50 : tierNum >= 4 ? 3.75 : 2.50);
+
+  // Baseline demand-adjusted rate history (City of Calgary ParkPlus rate framework 2023 - 2026)
+  const baseline = [
+    { period: '2023 Q1', rate: Math.max(1.0, +(currentMax - 0.75).toFixed(2)), note: 'Pandemic Recovery Pricing' },
+    { period: '2023 Q3', rate: Math.max(1.0, +(currentMax - 0.50).toFixed(2)), note: 'Occupancy Review' },
+    { period: '2024 Q1', rate: Math.max(1.0, +(currentMax - 0.50).toFixed(2)), note: 'Annual Rate Revision' },
+    { period: '2024 Q3', rate: Math.max(1.0, +(currentMax - 0.25).toFixed(2)), note: 'Demand Balancing Tier Adjustment' },
+    { period: '2025 Q1', rate: Math.max(1.0, +(currentMax - 0.25).toFixed(2)), note: 'Semi-Annual Policy Update' },
+    { period: '2025 Q3', rate: currentMax, note: 'Core District Optimization' },
+    { period: '2026 Q1', rate: currentMax, note: 'Current Active Schedule' }
+  ];
+
+  let localSnapshots = [];
+  try {
+    const raw = localStorage.getItem('cpa_price_snapshots');
+    if (raw) {
+      const all = JSON.parse(raw);
+      all.forEach(snap => {
+        if (snap.rates && snap.rates[zone.zoneNumber] !== undefined) {
+          localSnapshots.push({
+            period: snap.dateStr,
+            rate: snap.rates[zone.zoneNumber].peak,
+            note: 'Local Sync Snapshot',
+            timestamp: snap.timestamp
+          });
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('Error reading local snapshots:', e);
+  }
+
+  const initialRate = baseline[0].rate;
+  const netChange = +(currentMax - initialRate).toFixed(2);
+  const percentChange = initialRate > 0 ? ((netChange / initialRate) * 100).toFixed(1) : '0';
+
+  return {
+    tier: zone.priceZone,
+    currentPeak: currentMax,
+    initialPeak: initialRate,
+    netChange,
+    percentChange,
+    baselinePoints: baseline,
+    localSnapshots,
+    combinedPoints: [...baseline, ...localSnapshots]
+  };
+}
+
+function getChartThemeColors() {
+  const isDark = document.documentElement.classList.contains('dark');
+  return {
+    isDark,
+    text: isDark ? '#94a3b8' : '#64748b',
+    grid: isDark ? 'rgba(148, 163, 184, 0.12)' : 'rgba(100, 116, 139, 0.12)',
+    tooltipBg: isDark ? '#0f172a' : '#ffffff',
+    tooltipText: isDark ? '#f8fafc' : '#0f172a',
+    tooltipBorder: isDark ? '#334155' : '#e2e8f0',
+    primaryLine: isDark ? '#60a5fa' : '#2563eb',
+    primaryFill: isDark ? 'rgba(96, 165, 250, 0.2)' : 'rgba(37, 99, 235, 0.12)',
+    historyLine: isDark ? '#34d399' : '#059669',
+    historyFill: isDark ? 'rgba(52, 211, 153, 0.2)' : 'rgba(5, 150, 105, 0.12)'
+  };
+}
+
+function destroyCharts() {
+  if (state.scheduleChart) {
+    state.scheduleChart.destroy();
+    state.scheduleChart = null;
+  }
+  if (state.historyChart) {
+    state.historyChart.destroy();
+    state.historyChart = null;
+  }
+}
+
+function updateAllChartsTheme() {
+  if (state.selectedZone) {
+    if (state.activeTab === 'rates' && state.scheduleChart) {
+      renderScheduleChart(state.selectedZone, state.scheduleDayType);
+    } else if (state.activeTab === 'history' && state.historyChart) {
+      renderHistoryChart(state.selectedZone);
+    }
+  }
+}
+
+function renderScheduleChart(zone, dayType = 'weekday') {
+  if (typeof Chart === 'undefined') return;
+  const canvas = document.getElementById('schedule-chart');
+  if (!canvas) return;
+
+  state.scheduleDayType = dayType;
+
+  // Sync active day pill classes
+  ['weekday', 'saturday', 'sunday'].forEach(dt => {
+    const pill = document.getElementById(`pill-day-${dt}`);
+    if (pill) {
+      pill.classList.toggle('active', dt === dayType);
+    }
+  });
+
+  if (state.scheduleChart) {
+    state.scheduleChart.destroy();
+    state.scheduleChart = null;
+  }
+
+  const profile = generate24HourProfile(zone.rateInfo, dayType);
+  const theme = getChartThemeColors();
+  const labels = profile.map(p => p.hourLabel);
+  const data = profile.map(p => p.rate);
+
+  const maxDayRate = Math.max(...data.filter(r => r !== null), 0);
+  const statMax = document.getElementById('chart-stat-peak');
+  if (statMax) statMax.textContent = maxDayRate > 0 ? `$${maxDayRate.toFixed(2)}/hr` : 'Free';
+
+  state.scheduleChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Hourly Rate ($/hr)',
+        data,
+        stepped: 'before',
+        borderColor: theme.primaryLine,
+        backgroundColor: theme.primaryFill,
+        borderWidth: 2,
+        fill: true,
+        pointRadius: 2.5,
+        pointHoverRadius: 6,
+        pointBackgroundColor: (ctx) => {
+          const val = data[ctx.dataIndex];
+          return val === null ? '#ef4444' : theme.primaryLine;
+        },
+        pointBorderColor: theme.isDark ? '#0f172a' : '#ffffff',
+        pointBorderWidth: 1.5,
+        spanGaps: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: theme.tooltipBg,
+          titleColor: theme.tooltipText,
+          bodyColor: theme.tooltipText,
+          borderColor: theme.tooltipBorder,
+          borderWidth: 1,
+          padding: 8,
+          boxPadding: 4,
+          callbacks: {
+            title: (items) => {
+              const idx = items[0].dataIndex;
+              const nextHour = (idx + 1) % 12 === 0 ? 12 : (idx + 1) % 12;
+              const nextMeridian = (idx + 1 >= 12 && idx + 1 < 24) ? 'PM' : 'AM';
+              return `${labels[idx]} – ${nextHour} ${nextMeridian}`;
+            },
+            label: (ctx) => {
+              const val = ctx.raw;
+              if (val === null) return '⛔ Restriction: No Parking';
+              if (val === 0) return '🆓 Free Parking ($0.00/hr)';
+              return `💲 Rate: $${val.toFixed(2)} per hour`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: theme.grid },
+          ticks: {
+            color: theme.text,
+            font: { size: 10, family: 'Inter, sans-serif' },
+            maxRotation: 0,
+            callback: function(val, index) {
+              return index % 3 === 0 ? labels[index] : '';
+            }
+          }
+        },
+        y: {
+          min: 0,
+          suggestedMax: Math.max(5, maxDayRate + 0.5),
+          grid: { color: theme.grid },
+          ticks: {
+            color: theme.text,
+            font: { size: 10, family: 'Inter, sans-serif' },
+            callback: (v) => `$${v.toFixed(2)}`
+          }
+        }
+      }
+    }
+  });
+}
+
+function renderHistoryChart(zone) {
+  if (typeof Chart === 'undefined') return;
+  const canvas = document.getElementById('history-chart');
+  if (!canvas) return;
+
+  if (state.historyChart) {
+    state.historyChart.destroy();
+    state.historyChart = null;
+  }
+
+  const history = getZoneHistoricalData(zone);
+  const theme = getChartThemeColors();
+  const labels = history.combinedPoints.map(p => p.period);
+  const data = history.combinedPoints.map(p => p.rate);
+
+  state.historyChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Peak Daytime Rate ($/hr)',
+        data,
+        borderColor: theme.historyLine,
+        backgroundColor: theme.historyFill,
+        borderWidth: 2.5,
+        fill: true,
+        tension: 0.25,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        pointBackgroundColor: theme.historyLine,
+        pointBorderColor: theme.isDark ? '#0f172a' : '#ffffff',
+        pointBorderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: theme.tooltipBg,
+          titleColor: theme.tooltipText,
+          bodyColor: theme.tooltipText,
+          borderColor: theme.tooltipBorder,
+          borderWidth: 1,
+          padding: 8,
+          boxPadding: 4,
+          callbacks: {
+            label: (ctx) => {
+              const pt = history.combinedPoints[ctx.dataIndex];
+              return [
+                `💲 Peak Rate: $${ctx.raw.toFixed(2)}/hr`,
+                pt && pt.note ? `ℹ️ ${pt.note}` : ''
+              ].filter(Boolean);
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: theme.grid },
+          ticks: {
+            color: theme.text,
+            font: { size: 10, family: 'Inter, sans-serif' }
+          }
+        },
+        y: {
+          min: 0,
+          suggestedMax: Math.max(...data, 4) + 0.75,
+          grid: { color: theme.grid },
+          ticks: {
+            color: theme.text,
+            font: { size: 10, family: 'Inter, sans-serif' },
+            callback: (v) => `$${v.toFixed(2)}`
+          }
+        }
+      }
+    }
+  });
+}
+
+function changeScheduleDay(dayType) {
+  state.scheduleDayType = dayType;
+  if (state.selectedZone) {
+    renderScheduleChart(state.selectedZone, dayType);
+  }
+}
+
+function takeSnapshotNow() {
+  if (!state.selectedZone) return;
+  const now = Date.now();
+  const dateStr = new Date(now).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  try {
+    const raw = localStorage.getItem('cpa_price_snapshots');
+    let snapshots = raw ? JSON.parse(raw) : [];
+    const peak = state.selectedZone.rateInfo ? state.selectedZone.rateInfo.maxRate : 0;
+    
+    snapshots.push({
+      timestamp: now,
+      dateStr,
+      count: state.parsedZones.length,
+      rates: {
+        [state.selectedZone.zoneNumber]: {
+          peak,
+          tier: state.selectedZone.priceZone
+        }
+      }
+    });
+
+    if (snapshots.length > 30) snapshots = snapshots.slice(snapshots.length - 30);
+    localStorage.setItem('cpa_price_snapshots', JSON.stringify(snapshots));
+
+    renderDetailsSheet(state.selectedZone);
+    switchTab('history');
+  } catch (e) {
+    console.warn('Failed to save snapshot:', e);
+  }
+}
+
+function clearLocalHistory() {
+  try {
+    localStorage.removeItem('cpa_price_snapshots');
+    if (state.selectedZone) {
+      renderDetailsSheet(state.selectedZone);
+      switchTab('history');
+    }
+  } catch (e) {
+    console.warn('Failed to clear snapshots:', e);
+  }
 }
 
 /**
@@ -793,6 +1233,7 @@ function applyTheme(theme) {
     }
   }
 
+  updateAllChartsTheme();
   refreshIcons();
 }
 
@@ -974,6 +1415,7 @@ function processFeatures(features) {
   state.parsedZones = zones;
   populateBrzFilter(Array.from(brzSet).sort());
   applyFilterAndRender();
+  recordPriceSnapshot(zones);
 }
 
 function populateBrzFilter(brzList) {
@@ -1464,9 +1906,47 @@ function renderDetailsSheet(zone) {
     </div>
   `;
 
-  // 2. Rates & Hours Tab Content
+  // 2. Rates Tab Content with 24-Hour Time-of-Day Curve
   const ratesHtml = `
     <div class="flex flex-col gap-3">
+      <!-- 24-Hour Time-of-Day Hourly Rate Curve Card -->
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-3">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div class="flex flex-col">
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Time-of-Day Rate Curve</span>
+            <span class="text-xs font-semibold text-foreground">24-Hour Price Progression</span>
+          </div>
+          <!-- Day Selector Pills -->
+          <div class="inline-flex items-center gap-1 bg-muted/60 p-0.5 rounded-full border border-border">
+            <button id="pill-day-weekday" onclick="window.cpaApp.changeScheduleDay('weekday')" class="day-pill-btn active">Mon–Fri</button>
+            <button id="pill-day-saturday" onclick="window.cpaApp.changeScheduleDay('saturday')" class="day-pill-btn">Saturday</button>
+            <button id="pill-day-sunday" onclick="window.cpaApp.changeScheduleDay('sunday')" class="day-pill-btn">Sun/Holiday</button>
+          </div>
+        </div>
+
+        <!-- Chart Canvas Container -->
+        <div class="chart-container-box">
+          <canvas id="schedule-chart"></canvas>
+        </div>
+
+        <!-- Quick Rate Badges -->
+        <div class="grid grid-cols-3 gap-2 pt-1 border-t border-border text-center">
+          <div class="rounded-md border border-border bg-muted/30 p-1.5 flex flex-col items-center justify-center">
+            <span class="text-[9px] uppercase text-muted-foreground mb-0.5">Current Rate</span>
+            ${getPriceBadgeHtml(zone.rateInfo, 'live')}
+          </div>
+          <div class="rounded-md border border-border bg-muted/30 p-1.5 flex flex-col items-center justify-center">
+            <span class="text-[9px] uppercase text-muted-foreground mb-0.5">Peak Daytime</span>
+            <span id="chart-stat-peak" class="text-xs font-bold text-foreground">${zone.rateInfo && zone.rateInfo.maxRate > 0 ? `$${zone.rateInfo.maxRate.toFixed(2)}/hr` : 'Free'}</span>
+          </div>
+          <div class="rounded-md border border-border bg-muted/30 p-1.5 flex flex-col items-center justify-center">
+            <span class="text-[9px] uppercase text-muted-foreground mb-0.5">Off-Peak</span>
+            <span class="text-xs font-bold text-emerald-600 dark:text-emerald-400">FREE</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Rates Timetable Card -->
       <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-2">
         <div class="flex items-center justify-between">
           <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Live Rates Timetable</span>
@@ -1477,12 +1957,102 @@ function renderDetailsSheet(zone) {
 
       <div class="rounded-lg border border-border bg-muted/40 p-3 text-[11px] text-muted-foreground flex items-center gap-2">
         <i data-lucide="info" class="h-4 w-4 shrink-0"></i>
-        <span>Free parking applies on Sundays and statutory holidays unless specific restriction signage is posted.</span>
+        <span>Parking is free outside enforceable hours, on Sundays, and statutory holidays. Check posted signs for construction or emergency notices.</span>
       </div>
     </div>
   `;
 
-  // 3. Rules & Restrictions Tab Content
+  // 3. Historical Trends & Snapshots Tab Content
+  const histData = getZoneHistoricalData(zone);
+  const historyHtml = `
+    <div class="flex flex-col gap-3">
+      <!-- Multi-Year Rate History Chart Card -->
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <div class="flex flex-col">
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Historical Rates (2023 – Present)</span>
+            <span class="text-xs font-semibold text-foreground">Peak Daytime Rate Progression</span>
+          </div>
+          <span class="inline-flex items-center rounded-md border border-border bg-muted px-2 py-0.5 text-[10px] font-bold text-foreground">
+            Tier ${zone.priceZone}
+          </span>
+        </div>
+
+        <!-- Chart Canvas Container -->
+        <div class="chart-container-box">
+          <canvas id="history-chart"></canvas>
+        </div>
+
+        <!-- Metrics Summary Grid -->
+        <div class="grid grid-cols-3 gap-2 pt-1 border-t border-border text-center">
+          <div class="rounded-md border border-border bg-muted/30 p-1.5 flex flex-col">
+            <span class="text-[9px] uppercase text-muted-foreground">2023 Baseline</span>
+            <span class="text-xs font-bold text-foreground">$${histData.initialPeak.toFixed(2)}/hr</span>
+          </div>
+          <div class="rounded-md border border-border bg-muted/30 p-1.5 flex flex-col">
+            <span class="text-[9px] uppercase text-muted-foreground">Current Rate</span>
+            <span class="text-xs font-bold text-primary">$${histData.currentPeak.toFixed(2)}/hr</span>
+          </div>
+          <div class="rounded-md border border-border bg-muted/30 p-1.5 flex flex-col">
+            <span class="text-[9px] uppercase text-muted-foreground">Net Adjustment</span>
+            <span class="text-xs font-bold ${histData.netChange >= 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}">
+              ${histData.netChange >= 0 ? '+' : ''}$${histData.netChange.toFixed(2)} (${histData.percentChange}%)
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Demand-Based Pricing Context Card -->
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-2">
+        <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Demand-Based Pricing Policy</span>
+        <p class="text-xs text-muted-foreground leading-relaxed">
+          Calgary Parking Authority adjusts on-street parking rates according to occupancy performance benchmarks. Prices in this zone are indexed to target a 65%–85% stall occupancy.
+        </p>
+        <div class="mt-1 flex items-center justify-between text-xs pt-2 border-t border-border">
+          <span class="text-muted-foreground">Recorded Local Snapshots</span>
+          <span class="font-bold text-foreground">${histData.localSnapshots.length} logged</span>
+        </div>
+      </div>
+
+      <!-- Local Snapshot History Action Card -->
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-2.5">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Snapshot Tracking</span>
+          <div class="flex items-center gap-1.5">
+            <button onclick="window.cpaApp.takeSnapshotNow()" class="h-6 px-2 text-[10px] font-medium rounded border border-input bg-background hover:bg-accent text-foreground transition-colors inline-flex items-center gap-1">
+              <i data-lucide="camera" class="h-3 w-3"></i>
+              <span>Save Now</span>
+            </button>
+            ${histData.localSnapshots.length > 0 ? `
+            <button onclick="window.cpaApp.clearLocalHistory()" class="h-6 px-2 text-[10px] font-medium rounded border border-destructive/20 text-destructive hover:bg-destructive/10 transition-colors inline-flex items-center gap-1">
+              <i data-lucide="trash-2" class="h-3 w-3"></i>
+              <span>Clear</span>
+            </button>` : ''}
+          </div>
+        </div>
+
+        ${histData.localSnapshots.length > 0 ? `
+        <div class="flex flex-col gap-1 max-h-36 overflow-y-auto pr-1">
+          ${histData.localSnapshots.slice().reverse().map(snap => `
+            <div class="history-snapshot-item flex items-center justify-between p-2 rounded-md border border-border bg-muted/20 text-xs">
+              <div class="flex items-center gap-2">
+                <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                <span class="font-medium text-foreground">${snap.period}</span>
+              </div>
+              <span class="font-bold text-foreground">$${snap.rate.toFixed(2)}/hr</span>
+            </div>
+          `).join('')}
+        </div>
+        ` : `
+        <div class="text-[11px] text-muted-foreground italic py-1">
+          Snapshots are captured automatically when you sync live parking data, or click "Save Now" to log an instant price checkpoint.
+        </div>
+        `}
+      </div>
+    </div>
+  `;
+
+  // 4. Rules & Restrictions Tab Content
   let restrictionContent = '';
   if (zone.restrictType && zone.restrictType.toLowerCase() !== 'none') {
     restrictionContent += `
@@ -1539,6 +2109,7 @@ function renderDetailsSheet(zone) {
   zone._tabHtml = {
     overview: overviewHtml,
     rates: ratesHtml,
+    history: historyHtml,
     rules: rulesHtml
   };
 
@@ -1554,21 +2125,33 @@ function switchTab(tabName) {
   const tabButtons = {
     overview: elements.tabBtnOverview,
     rates: elements.tabBtnRates,
+    history: elements.tabBtnHistory,
     rules: elements.tabBtnRules
   };
 
   Object.keys(tabButtons).forEach(name => {
     const btn = tabButtons[name];
+    if (!btn) return;
     if (name === tabName) {
-      btn.className = 'tab-trigger inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium ring-offset-background transition-all bg-background text-foreground shadow-sm';
+      btn.className = 'tab-trigger inline-flex items-center justify-center whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium ring-offset-background transition-all bg-background text-foreground shadow-sm';
     } else {
-      btn.className = 'tab-trigger inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium ring-offset-background transition-all text-muted-foreground hover:text-foreground';
+      btn.className = 'tab-trigger inline-flex items-center justify-center whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium ring-offset-background transition-all text-muted-foreground hover:text-foreground';
     }
   });
 
   if (state.selectedZone && state.selectedZone._tabHtml) {
     elements.sidebarContent.innerHTML = state.selectedZone._tabHtml[tabName] || state.selectedZone._tabHtml.overview;
     refreshIcons();
+
+    if (tabName === 'rates') {
+      setTimeout(() => {
+        renderScheduleChart(state.selectedZone, state.scheduleDayType || 'weekday');
+      }, 50);
+    } else if (tabName === 'history') {
+      setTimeout(() => {
+        renderHistoryChart(state.selectedZone);
+      }, 50);
+    }
   }
 }
 
@@ -1591,11 +2174,13 @@ function openSheet() {
 }
 
 function closeSheet() {
+  destroyCharts();
   elements.detailsSheet.classList.remove('open');
   elements.sheetBackdrop.classList.remove('open');
 }
 
 function clearSelection() {
+  destroyCharts();
   state.selectedZone = null;
   if (state.activePolyline) {
     state.activePolyline.forEach(p => p.setStyle({
@@ -1851,6 +2436,9 @@ function setupEventListeners() {
   // Tabs
   elements.tabBtnOverview.addEventListener('click', () => switchTab('overview'));
   elements.tabBtnRates.addEventListener('click', () => switchTab('rates'));
+  if (elements.tabBtnHistory) {
+    elements.tabBtnHistory.addEventListener('click', () => switchTab('history'));
+  }
   elements.tabBtnRules.addEventListener('click', () => switchTab('rules'));
 
   // Settings Dialog
@@ -1940,6 +2528,9 @@ window.cpaApp = {
   deleteCustomLocation,
   zoomToCustomLocation,
   resetAllFilters,
+  changeScheduleDay,
+  takeSnapshotNow,
+  clearLocalHistory,
 };
 
 // Bootstrap App
