@@ -157,10 +157,136 @@
   </header>
 
   <!-- ========================================================================
+       Secondary Toolbar: Custom Locations, Closest + Cheapest & Price Filters
+       ======================================================================== -->
+  <div id="filter-toolbar-row" class="z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/95 px-4 py-2 backdrop-blur gap-2 text-xs">
+    
+    <!-- Left Section: Custom Location & Proximity Controls -->
+    <div class="flex flex-wrap items-center gap-2">
+      <!-- Target Location Picker -->
+      <div class="flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1 shadow-sm">
+        <i data-lucide="map-pin" class="h-3.5 w-3.5 text-primary shrink-0"></i>
+        <label for="location-select" class="text-muted-foreground font-medium hidden sm:inline">Target:</label>
+        <select id="location-select" class="bg-transparent font-medium text-foreground focus:outline-none cursor-pointer max-w-[190px] truncate" title="Set destination to find closest & cheapest parking">
+          <option value="NONE">All Calgary (No Target)</option>
+        </select>
+      </div>
+
+      <!-- Manage Locations Button -->
+      <button 
+        id="btn-manage-locations" 
+        class="inline-flex items-center gap-1.5 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground px-2.5 py-1 text-xs font-medium shadow-sm transition-colors"
+        title="Manage saved locations & add new rows"
+      >
+        <i data-lucide="map-pin-plus" class="h-3.5 w-3.5 text-primary"></i>
+        <span class="hidden sm:inline">Manage Locations</span>
+        <span class="sm:hidden">Locations</span>
+      </button>
+
+      <!-- Walking Radius Dropdown (active when location is chosen) -->
+      <div id="radius-container" class="hidden items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1 shadow-sm">
+        <i data-lucide="footprints" class="h-3.5 w-3.5 text-muted-foreground shrink-0"></i>
+        <label for="radius-select" class="text-muted-foreground font-medium">Radius:</label>
+        <select id="radius-select" class="bg-transparent font-medium text-foreground focus:outline-none cursor-pointer">
+          <option value="300">Within 300m (~4 min walk)</option>
+          <option value="500" selected>Within 500m (~6 min walk)</option>
+          <option value="1000">Within 1 km (~12 min walk)</option>
+          <option value="2000">Within 2 km (~25 min walk)</option>
+          <option value="ALL">Any Distance</option>
+        </select>
+      </div>
+
+      <!-- Sort Criterion Dropdown (active when location is chosen) -->
+      <div id="sort-container" class="hidden items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1 shadow-sm">
+        <i data-lucide="arrow-down-up" class="h-3.5 w-3.5 text-muted-foreground shrink-0"></i>
+        <label for="sort-select" class="text-muted-foreground font-medium">Sort:</label>
+        <select id="sort-select" class="bg-transparent font-medium text-foreground focus:outline-none cursor-pointer">
+          <option value="closest_cheapest">Closest + Cheapest (Best Value)</option>
+          <option value="cheapest">Cheapest First</option>
+          <option value="closest">Closest First</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Right Section: Price Threshold & Rate Mode -->
+    <div class="flex flex-wrap items-center gap-2">
+      <!-- Price Threshold Filter -->
+      <div class="flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1 shadow-sm">
+        <i data-lucide="badge-dollar-sign" class="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"></i>
+        <label for="price-filter" class="text-muted-foreground font-medium">Price:</label>
+        <select id="price-filter" class="bg-transparent font-semibold text-foreground focus:outline-none cursor-pointer" title="Filter maximum parking rate">
+          <option value="ALL">All Rates</option>
+          <option value="free">Free Parking Only</option>
+          <option value="1">≤ $1.00 / hr</option>
+          <option value="2">≤ $2.00 / hr</option>
+          <option value="3">≤ $3.00 / hr</option>
+          <option value="4">≤ $4.00 / hr</option>
+          <option value="5">≤ $5.00 / hr</option>
+        </select>
+      </div>
+
+      <!-- Rate Mode Toggle (Live Now vs Peak) -->
+      <div class="flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1 shadow-sm">
+        <i data-lucide="clock" class="h-3.5 w-3.5 text-muted-foreground shrink-0"></i>
+        <select id="rate-mode-select" class="bg-transparent font-medium text-foreground focus:outline-none cursor-pointer" title="Price calculation mode">
+          <option value="live">Live Rate (Now)</option>
+          <option value="max">Peak Daytime Rate</option>
+        </select>
+      </div>
+
+      <!-- Best Value Spots Panel Toggle -->
+      <button 
+        id="btn-toggle-recommendations" 
+        class="hidden inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 text-xs font-semibold shadow-sm transition-colors"
+        title="View ranked best value parking near target"
+      >
+        <i data-lucide="sparkles" class="h-3.5 w-3.5 text-amber-500"></i>
+        <span>Best Value</span>
+      </button>
+
+      <!-- Reset Filters Button -->
+      <button 
+        id="btn-reset-filters" 
+        class="inline-flex items-center justify-center rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground h-7 w-7 text-xs shadow-sm transition-colors"
+        title="Reset all filters & target location"
+      >
+        <i data-lucide="rotate-ccw" class="h-3.5 w-3.5"></i>
+      </button>
+    </div>
+
+  </div>
+
+  <!-- ========================================================================
        Main Content / Map Layout
        ======================================================================== -->
   <main class="relative flex-1 w-full h-full overflow-hidden">
     
+    <!-- Map Picker Notification Banner -->
+    <div id="map-picker-banner" class="hidden absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full border border-primary bg-background/95 px-4 py-2 shadow-xl backdrop-blur text-xs font-medium animate-bounce">
+      <i data-lucide="crosshair" class="h-4 w-4 text-primary"></i>
+      <span class="text-foreground">Click anywhere on the map to set location point</span>
+      <button id="btn-cancel-picker" class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground">Cancel</button>
+    </div>
+
+    <!-- Floating Best Value Panel (Top-Left overlay) -->
+    <div id="best-value-panel" class="hidden absolute top-16 left-4 z-20 flex flex-col gap-2 rounded-xl border border-border bg-background/95 p-3.5 shadow-xl backdrop-blur w-80 max-h-[calc(100vh-210px)] overflow-hidden transition-all text-xs">
+      <div class="flex items-center justify-between border-b border-border pb-2">
+        <div class="flex items-center gap-1.5 font-semibold text-foreground">
+          <i data-lucide="sparkles" class="h-4 w-4 text-amber-500"></i>
+          <span id="best-value-title">Best Value Near Target</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <span id="best-value-count-badge" class="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">0 spots</span>
+          <button id="best-value-close-btn" class="rounded p-0.5 text-muted-foreground hover:text-foreground">
+            <i data-lucide="x" class="h-3.5 w-3.5"></i>
+          </button>
+        </div>
+      </div>
+      <div id="best-value-list" class="flex-1 overflow-y-auto flex flex-col gap-2 pr-0.5 max-h-[50vh]">
+        <!-- Rendered items -->
+      </div>
+    </div>
+
     <!-- Leaflet Map Container -->
     <div id="map" class="w-full h-full"></div>
 
@@ -320,6 +446,122 @@
         <button id="settings-save-btn" class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90">
           Save &amp; Reload
         </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       Custom Locations Dialog (shadcn Dialog Component)
+       ======================================================================== -->
+  <div id="locations-dialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm dialog-overlay p-4">
+    <div class="dialog-content w-full max-w-2xl rounded-xl border border-border bg-background p-6 shadow-xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+      
+      <!-- Dialog Header -->
+      <div class="flex items-center justify-between border-b border-border pb-3">
+        <div class="flex flex-col gap-1">
+          <h3 class="text-lg font-semibold leading-none tracking-tight flex items-center gap-2">
+            <i data-lucide="map-pin" class="h-5 w-5 text-primary"></i>
+            Custom Locations
+          </h3>
+          <p class="text-xs text-muted-foreground">Save your office, home, or frequent destinations to discover the closest and cheapest parking.</p>
+        </div>
+        <button id="locations-close-btn" class="rounded-sm opacity-70 hover:opacity-100 p-1">
+          <i data-lucide="x" class="h-5 w-5"></i>
+        </button>
+      </div>
+
+      <!-- Saved Locations Table -->
+      <div class="flex flex-col gap-2">
+        <div class="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+          <span>Saved Locations</span>
+          <span id="locations-count-badge" class="text-[11px] font-normal text-muted-foreground">0 saved</span>
+        </div>
+        <div class="rounded-md border border-border overflow-hidden">
+          <table class="w-full text-xs text-left">
+            <thead class="bg-muted/50 border-b border-border text-[11px] text-muted-foreground uppercase font-medium">
+              <tr>
+                <th class="py-2.5 px-3">Name</th>
+                <th class="py-2.5 px-3">Location / Coordinates</th>
+                <th class="py-2.5 px-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="locations-table-body" class="divide-y divide-border">
+              <!-- Location rows rendered here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Add New Location Form Row -->
+      <div class="rounded-lg border border-border bg-muted/20 p-4 flex flex-col gap-3">
+        <div class="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          <i data-lucide="plus-circle" class="h-4 w-4 text-primary"></i>
+          <span>Add New Location Row</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="flex flex-col gap-1">
+            <label class="text-[11px] font-medium text-foreground">Location Name</label>
+            <input 
+              type="text" 
+              id="new-loc-name" 
+              placeholder="e.g. My Office, Gym, Client Site..." 
+              class="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-[11px] font-medium text-foreground">Address or Coordinates</label>
+            <div class="flex gap-1.5">
+              <input 
+                type="text" 
+                id="new-loc-address" 
+                placeholder="e.g. 530 8 Ave SW or lat, lng" 
+                class="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+              <button 
+                id="btn-search-address" 
+                type="button"
+                class="shrink-0 h-8 px-2.5 rounded-md border border-input bg-background hover:bg-accent text-foreground text-xs font-medium flex items-center gap-1 shadow-sm" 
+                title="Geocode Calgary Address"
+              >
+                <i data-lucide="search" class="h-3.5 w-3.5"></i>
+                <span class="hidden sm:inline">Find</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border/60">
+          <div class="flex flex-wrap items-center gap-2">
+            <button 
+              id="btn-pick-map" 
+              type="button" 
+              class="h-8 px-3 rounded-md border border-input bg-background hover:bg-accent text-foreground text-xs font-medium inline-flex items-center gap-1.5 shadow-sm"
+              title="Click on the Leaflet map to pick coordinates"
+            >
+              <i data-lucide="crosshair" class="h-3.5 w-3.5 text-primary"></i>
+              <span>Pick Point on Map</span>
+            </button>
+            <button 
+              id="btn-use-gps" 
+              type="button" 
+              class="h-8 px-3 rounded-md border border-input bg-background hover:bg-accent text-foreground text-xs font-medium inline-flex items-center gap-1.5 shadow-sm"
+              title="Use current device geolocation"
+            >
+              <i data-lucide="navigation" class="h-3.5 w-3.5 text-primary"></i>
+              <span>Use My GPS</span>
+            </button>
+          </div>
+          <button 
+            id="btn-save-location" 
+            type="button" 
+            class="h-8 px-4 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-medium inline-flex items-center gap-1.5 shadow"
+          >
+            <i data-lucide="plus" class="h-3.5 w-3.5"></i>
+            <span>Add to Locations</span>
+          </button>
+        </div>
+        <div id="new-loc-status-msg" class="text-[11px] text-muted-foreground hidden"></div>
       </div>
 
     </div>

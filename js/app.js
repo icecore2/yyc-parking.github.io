@@ -23,6 +23,21 @@ const state = {
   isLoading: false,
   theme: localStorage.getItem('cpa_theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
   activeTab: 'overview', // 'overview', 'rates', 'rules'
+  
+  // Price Filtration State
+  priceFilter: 'ALL', // 'ALL', 'free', '1', '2', '3', '4', '5'
+  rateMode: 'live', // 'live' (current rate right now), 'max' (peak daytime rate)
+
+  // Custom Locations & Closest + Cheapest State
+  customLocations: [],
+  activeLocationId: 'NONE',
+  activeLocation: null,
+  maxRadius: 500, // 300, 500, 1000, 2000, 'ALL'
+  sortMode: 'closest_cheapest', // 'closest_cheapest', 'cheapest', 'closest'
+  targetMarker: null,
+  radiusCircle: null,
+  isPickingLocation: false,
+  showBestValuePanel: true,
 };
 
 // UI Elements
@@ -65,6 +80,37 @@ const elements = {
   settingsSaveBtn: document.getElementById('settings-save-btn'),
   settingsResetBtn: document.getElementById('settings-reset-btn'),
   apiUrlInput: document.getElementById('api-url-input'),
+
+  // Custom Locations & Price Filtration Elements
+  filterToolbarRow: document.getElementById('filter-toolbar-row'),
+  locationSelect: document.getElementById('location-select'),
+  btnManageLocations: document.getElementById('btn-manage-locations'),
+  radiusContainer: document.getElementById('radius-container'),
+  radiusSelect: document.getElementById('radius-select'),
+  sortContainer: document.getElementById('sort-container'),
+  sortSelect: document.getElementById('sort-select'),
+  priceFilter: document.getElementById('price-filter'),
+  rateModeSelect: document.getElementById('rate-mode-select'),
+  btnToggleRecommendations: document.getElementById('btn-toggle-recommendations'),
+  btnResetFilters: document.getElementById('btn-reset-filters'),
+  mapPickerBanner: document.getElementById('map-picker-banner'),
+  btnCancelPicker: document.getElementById('btn-cancel-picker'),
+  bestValuePanel: document.getElementById('best-value-panel'),
+  bestValueTitle: document.getElementById('best-value-title'),
+  bestValueCountBadge: document.getElementById('best-value-count-badge'),
+  bestValueCloseBtn: document.getElementById('best-value-close-btn'),
+  bestValueList: document.getElementById('best-value-list'),
+  locationsDialog: document.getElementById('locations-dialog'),
+  locationsCloseBtn: document.getElementById('locations-close-btn'),
+  locationsCountBadge: document.getElementById('locations-count-badge'),
+  locationsTableBody: document.getElementById('locations-table-body'),
+  newLocName: document.getElementById('new-loc-name'),
+  newLocAddress: document.getElementById('new-loc-address'),
+  btnSearchAddress: document.getElementById('btn-search-address'),
+  btnPickMap: document.getElementById('btn-pick-map'),
+  btnUseGps: document.getElementById('btn-use-gps'),
+  btnSaveLocation: document.getElementById('btn-save-location'),
+  newLocStatusMsg: document.getElementById('new-loc-status-msg'),
 };
 
 /**
@@ -117,6 +163,602 @@ function getPolylineMidpoint(latLngs) {
     }
   }
   return latLngs[Math.floor(latLngs.length / 2)];
+}
+
+/**
+ * Rate Engine: Parse Calgary Schedules & Determine Live / Peak Rates
+ */
+function getCalgaryNow() {
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-US', {
+    timeZone: 'America/Edmonton',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  const [hourStr, minStr] = timeStr.split(':');
+  const currentMinutes = parseInt(hourStr, 10) * 60 + parseInt(minStr, 10);
+
+  const dayStr = now.toLocaleDateString('en-US', {
+    timeZone: 'America/Edmonton',
+    weekday: 'short'
+  });
+
+  return {
+    dayStr,
+    currentMinutes,
+    timeStr,
+    isSunday: dayStr === 'Sun',
+    isSaturday: dayStr === 'Sat',
+    isWeekday: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(dayStr)
+  };
+}
+
+function parseTimeRangeToMinutes(timeStr) {
+  const m = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*to\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!m) return null;
+
+  let h1 = parseInt(m[1], 10);
+  const min1 = parseInt(m[2], 10);
+  const p1 = m[3].toUpperCase();
+  if (p1 === 'PM' && h1 !== 12) h1 += 12;
+  if (p1 === 'AM' && h1 === 12) h1 = 0;
+
+  let h2 = parseInt(m[4], 10);
+  const min2 = parseInt(m[5], 10);
+  const p2 = m[6].toUpperCase();
+  if (p2 === 'PM' && h2 !== 12) h2 += 12;
+  if (p2 === 'AM' && h2 === 12) h2 = 0;
+
+  return {
+    start: h1 * 60 + min1,
+    end: h2 * 60 + min2
+  };
+}
+
+function parseZoneRateSchedule(htmlRates, enforceableTime) {
+  const defaultRes = {
+    currentRate: 0,
+    isCurrentlyFree: true,
+    isNoParking: false,
+    currentSlotLabel: 'Outside Enforceable Hours / Free',
+    minRate: 0,
+    maxRate: 0,
+    intervals: []
+  };
+
+  if (!htmlRates || !htmlRates.trim()) {
+    return defaultRes;
+  }
+
+  const clean = htmlRates
+    .replace(/<br\s*\/?>\s*<br\s*\/?>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?b>/gi, '')
+    .trim();
+
+  const lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
+  const intervals = [];
+  const prices = [];
+  let hasFreeRule = false;
+
+  for (let i = 0; i < lines.length; i += 2) {
+    const header = lines[i];
+    const rateText = lines[i + 1] || '';
+
+    const priceMatch = rateText.match(/\$([0-9]+(?:\.[0-9]{2})?)/);
+    const isFree = /free/i.test(rateText) || /free/i.test(header);
+    const isNoParking = /no parking/i.test(rateText) || /no parking/i.test(header);
+
+    let price = null;
+    if (priceMatch) {
+      price = parseFloat(priceMatch[1]);
+      prices.push(price);
+    } else if (isFree) {
+      price = 0;
+      hasFreeRule = true;
+    }
+
+    let appliesDays = 'all';
+    const hLower = header.toLowerCase();
+    if (hLower.includes('mon-fri') || hLower.includes('mon to fri')) {
+      appliesDays = 'weekday';
+    } else if (hLower.includes('saturday')) {
+      appliesDays = 'saturday';
+    } else if (hLower.includes('sunday') || hLower.includes('holiday')) {
+      appliesDays = 'sunday';
+    }
+
+    const timeRange = parseTimeRangeToMinutes(header);
+
+    intervals.push({
+      header,
+      rateText,
+      price,
+      isFree,
+      isNoParking,
+      appliesDays,
+      timeRange
+    });
+  }
+
+  const minRate = prices.length > 0 ? Math.min(...prices) : (hasFreeRule ? 0 : 0);
+  const maxRate = prices.length > 0 ? Math.max(...prices) : (hasFreeRule ? 0 : 0);
+
+  const calgary = getCalgaryNow();
+
+  if (calgary.isSunday) {
+    return {
+      currentRate: 0,
+      isCurrentlyFree: true,
+      isNoParking: false,
+      currentSlotLabel: 'Sunday (Free Parking)',
+      minRate,
+      maxRate,
+      intervals
+    };
+  }
+
+  let matchedInterval = null;
+  for (const inv of intervals) {
+    let dayMatch = false;
+    if (inv.appliesDays === 'weekday' && calgary.isWeekday) dayMatch = true;
+    else if (inv.appliesDays === 'saturday' && calgary.isSaturday) dayMatch = true;
+    else if (inv.appliesDays === 'all') dayMatch = true;
+
+    if (dayMatch && inv.timeRange) {
+      if (calgary.currentMinutes >= inv.timeRange.start && calgary.currentMinutes < inv.timeRange.end) {
+        matchedInterval = inv;
+        break;
+      }
+    }
+  }
+
+  if (matchedInterval) {
+    return {
+      currentRate: matchedInterval.price !== null ? matchedInterval.price : 0,
+      isCurrentlyFree: matchedInterval.isFree || matchedInterval.price === 0,
+      isNoParking: matchedInterval.isNoParking,
+      currentSlotLabel: `${matchedInterval.header}: ${matchedInterval.rateText}`,
+      minRate,
+      maxRate,
+      intervals
+    };
+  }
+
+  return {
+    currentRate: 0,
+    isCurrentlyFree: true,
+    isNoParking: false,
+    currentSlotLabel: 'After Hours (Free Parking)',
+    minRate,
+    maxRate,
+    intervals
+  };
+}
+
+function getPriceBadgeHtml(rateInfo, rateMode = 'live') {
+  if (!rateInfo) {
+    return `<span class="badge-rate-free px-2 py-0.5 rounded text-[10px] font-bold">FREE</span>`;
+  }
+
+  const rate = rateMode === 'live' ? rateInfo.currentRate : rateInfo.maxRate;
+  const isFree = rateMode === 'live' ? rateInfo.isCurrentlyFree : rate === 0;
+
+  if (isFree || rate === 0) {
+    return `<span class="badge-rate-free px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1"><span>FREE</span>${rateMode === 'live' ? '<span class="text-[9px] opacity-75">NOW</span>' : ''}</span>`;
+  }
+
+  let colorClass = 'badge-rate-low';
+  if (rate >= 4) colorClass = 'badge-rate-high';
+  else if (rate >= 2.5) colorClass = 'badge-rate-med';
+
+  return `<span class="${colorClass} px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1"><span>$${rate.toFixed(2)}/hr</span>${rateMode === 'live' ? '<span class="text-[9px] opacity-75">NOW</span>' : '<span class="text-[9px] opacity-75">PEAK</span>'}</span>`;
+}
+
+/**
+ * Custom Locations Management
+ */
+const DEFAULT_LOCATIONS = [
+  {
+    id: 'loc-office-downtown',
+    name: 'Downtown Office',
+    address: '8th Ave SW & 4th St SW, Calgary',
+    lat: 51.0458,
+    lng: -114.0715
+  },
+  {
+    id: 'loc-stephen-ave',
+    name: 'Stephen Avenue Walk',
+    address: 'Stephen Ave & Centre St, Calgary',
+    lat: 51.0449,
+    lng: -114.0628
+  }
+];
+
+function initCustomLocations() {
+  try {
+    const stored = localStorage.getItem('cpa_custom_locations');
+    if (stored) {
+      state.customLocations = JSON.parse(stored);
+    } else {
+      state.customLocations = [...DEFAULT_LOCATIONS];
+      saveCustomLocations();
+    }
+  } catch (e) {
+    console.warn('Failed to read custom locations from localStorage:', e);
+    state.customLocations = [...DEFAULT_LOCATIONS];
+  }
+
+  renderLocationsDropdown();
+  renderLocationsTable();
+}
+
+function saveCustomLocations() {
+  try {
+    localStorage.setItem('cpa_custom_locations', JSON.stringify(state.customLocations));
+  } catch (e) {
+    console.warn('Failed to save custom locations:', e);
+  }
+  renderLocationsDropdown();
+  renderLocationsTable();
+}
+
+function renderLocationsDropdown() {
+  if (!elements.locationSelect) return;
+  const currentVal = state.activeLocationId || 'NONE';
+  elements.locationSelect.innerHTML = '<option value="NONE">All Calgary (No Target)</option>';
+  
+  state.customLocations.forEach(loc => {
+    const opt = document.createElement('option');
+    opt.value = loc.id;
+    opt.textContent = `📍 ${loc.name}`;
+    elements.locationSelect.appendChild(opt);
+  });
+
+  elements.locationSelect.value = state.customLocations.some(l => l.id === currentVal) ? currentVal : 'NONE';
+}
+
+function renderLocationsTable() {
+  if (!elements.locationsTableBody) return;
+  elements.locationsTableBody.innerHTML = '';
+  
+  if (elements.locationsCountBadge) {
+    elements.locationsCountBadge.textContent = `${state.customLocations.length} saved`;
+  }
+
+  if (state.customLocations.length === 0) {
+    elements.locationsTableBody.innerHTML = `
+      <tr>
+        <td colspan="3" class="py-6 text-center text-muted-foreground italic">
+          No custom locations saved yet. Use the form below to add your office, home, or frequent spots!
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  state.customLocations.forEach(loc => {
+    const isActive = state.activeLocationId === loc.id;
+    const tr = document.createElement('tr');
+    tr.className = `hover:bg-muted/40 transition-colors ${isActive ? 'bg-primary/5 font-medium' : ''}`;
+    
+    tr.innerHTML = `
+      <td class="py-2.5 px-3">
+        <div class="flex items-center gap-2">
+          <span class="h-2 w-2 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-muted-foreground/40'}"></span>
+          <span class="font-semibold text-foreground">${loc.name}</span>
+          ${isActive ? '<span class="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.2 text-[9px] font-bold text-emerald-600 dark:text-emerald-400">Active</span>' : ''}
+        </div>
+      </td>
+      <td class="py-2.5 px-3">
+        <div class="flex flex-col">
+          <span class="text-foreground truncate max-w-[200px]" title="${loc.address}">${loc.address}</span>
+          <span class="text-[10px] text-muted-foreground font-mono">${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}</span>
+        </div>
+      </td>
+      <td class="py-2.5 px-3 text-right">
+        <div class="flex items-center justify-end gap-1.5">
+          ${!isActive ? `
+            <button 
+              onclick="window.cpaApp.setActiveLocation('${loc.id}')"
+              class="h-7 px-2 rounded border border-input bg-background hover:bg-accent text-foreground text-[11px] font-medium shadow-sm"
+              title="Set as target for closest + cheapest search"
+            >
+              Set Target
+            </button>
+          ` : `
+            <span class="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold px-1">Selected</span>
+          `}
+          <button 
+            onclick="window.cpaApp.zoomToCustomLocation('${loc.id}')"
+            class="h-7 w-7 rounded border border-input bg-background hover:bg-accent text-foreground flex items-center justify-center text-xs shadow-sm"
+            title="View on Map"
+          >
+            <i data-lucide="crosshair" class="h-3.5 w-3.5"></i>
+          </button>
+          <button 
+            onclick="window.cpaApp.deleteCustomLocation('${loc.id}')"
+            class="h-7 w-7 rounded border border-input bg-background hover:bg-destructive/10 text-muted-foreground hover:text-destructive flex items-center justify-center text-xs shadow-sm transition-colors"
+            title="Delete this location"
+          >
+            <i data-lucide="trash-2" class="h-3.5 w-3.5"></i>
+          </button>
+        </div>
+      </td>
+    `;
+    elements.locationsTableBody.appendChild(tr);
+  });
+
+  refreshIcons();
+}
+
+function setActiveLocation(locId) {
+  state.activeLocationId = locId;
+  const loc = state.customLocations.find(l => l.id === locId) || null;
+  state.activeLocation = loc;
+
+  if (elements.locationSelect) {
+    elements.locationSelect.value = locId;
+  }
+
+  if (loc) {
+    elements.radiusContainer.classList.remove('hidden');
+    elements.radiusContainer.classList.add('flex');
+    elements.sortContainer.classList.remove('hidden');
+    elements.sortContainer.classList.add('flex');
+    elements.btnToggleRecommendations.classList.remove('hidden');
+    state.showBestValuePanel = true;
+    
+    renderTargetLocationOnMap(loc);
+    if (elements.map) {
+      elements.map.setView([loc.lat, loc.lng], 15);
+    }
+  } else {
+    elements.radiusContainer.classList.add('hidden');
+    elements.radiusContainer.classList.remove('flex');
+    elements.sortContainer.classList.add('hidden');
+    elements.sortContainer.classList.remove('flex');
+    elements.btnToggleRecommendations.classList.add('hidden');
+    elements.bestValuePanel.classList.add('hidden');
+    
+    if (state.targetMarker) {
+      elements.map.removeLayer(state.targetMarker);
+      state.targetMarker = null;
+    }
+    if (state.radiusCircle) {
+      elements.map.removeLayer(state.radiusCircle);
+      state.radiusCircle = null;
+    }
+  }
+
+  renderLocationsTable();
+  applyFilterAndRender();
+}
+
+function renderTargetLocationOnMap(loc) {
+  if (!elements.map || !loc) return;
+
+  const latLng = [loc.lat, loc.lng];
+
+  if (state.targetMarker) {
+    state.targetMarker.setLatLng(latLng);
+  } else {
+    const targetIcon = L.divIcon({
+      className: 'custom-target-marker',
+      html: `
+        <div class="target-marker-wrapper" title="${loc.name}">
+          <div class="target-marker-pulse"></div>
+          <div class="target-marker-badge">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+          </div>
+        </div>
+      `,
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+      popupAnchor: [0, -20]
+    });
+
+    state.targetMarker = L.marker(latLng, { icon: targetIcon, zIndexOffset: 1000 }).addTo(elements.map);
+    state.targetMarker.bindPopup(`
+      <div class="p-3 flex flex-col gap-1 min-w-[180px]">
+        <div class="flex items-center gap-1.5 text-xs font-bold text-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+          <span>Target Destination</span>
+        </div>
+        <div class="text-sm font-semibold text-foreground">${loc.name}</div>
+        <div class="text-xs text-muted-foreground">${loc.address}</div>
+      </div>
+    `);
+  }
+
+  const radius = state.maxRadius === 'ALL' ? 0 : Number(state.maxRadius);
+  if (state.radiusCircle) {
+    if (radius > 0) {
+      state.radiusCircle.setLatLng(latLng);
+      state.radiusCircle.setRadius(radius);
+      if (!elements.map.hasLayer(state.radiusCircle)) {
+        elements.map.addLayer(state.radiusCircle);
+      }
+    } else {
+      elements.map.removeLayer(state.radiusCircle);
+    }
+  } else if (radius > 0) {
+    state.radiusCircle = L.circle(latLng, {
+      radius: radius,
+      color: '#3b82f6',
+      weight: 2,
+      opacity: 0.6,
+      dashArray: '6, 6',
+      fillColor: '#3b82f6',
+      fillOpacity: 0.08
+    }).addTo(elements.map);
+  }
+}
+
+async function geocodeAddress(query) {
+  if (!query || query.trim().length < 2) return null;
+  const statusEl = elements.newLocStatusMsg;
+  if (statusEl) {
+    statusEl.className = 'text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1';
+    statusEl.innerHTML = '<span class="animate-spin inline-block h-3 w-3 border-2 border-current border-t-transparent rounded-full"></span> Searching address in Calgary...';
+    statusEl.classList.remove('hidden');
+  }
+
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ', Calgary, Alberta')}&limit=1&viewbox=-114.35,51.25,-113.85,50.85&bounded=1`;
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    const data = await res.json();
+    if (data && data.length > 0) {
+      const match = data[0];
+      const lat = parseFloat(match.lat);
+      const lng = parseFloat(match.lon);
+      const shortAddr = match.display_name.split(',').slice(0, 3).join(',');
+      if (statusEl) {
+        statusEl.className = 'text-[11px] text-emerald-600 dark:text-emerald-400';
+        statusEl.textContent = `✓ Found: ${shortAddr}`;
+      }
+      return { lat, lng, display: shortAddr };
+    } else {
+      if (statusEl) {
+        statusEl.className = 'text-[11px] text-rose-500';
+        statusEl.textContent = 'No matching Calgary location found. Try adding street name or pick on map.';
+      }
+      return null;
+    }
+  } catch (err) {
+    console.error('Geocoding error:', err);
+    if (statusEl) {
+      statusEl.className = 'text-[11px] text-rose-500';
+      statusEl.textContent = 'Could not search address. You can click "Pick Point on Map" instead.';
+    }
+    return null;
+  }
+}
+
+function startMapLocationPicker() {
+  state.isPickingLocation = true;
+  elements.locationsDialog.classList.remove('open');
+  elements.mapPickerBanner.classList.remove('hidden');
+  if (elements.map) {
+    elements.map.getContainer().style.cursor = 'crosshair';
+  }
+}
+
+function cancelMapLocationPicker() {
+  state.isPickingLocation = false;
+  elements.mapPickerBanner.classList.add('hidden');
+  if (elements.map) {
+    elements.map.getContainer().style.cursor = '';
+  }
+  elements.locationsDialog.classList.add('open');
+}
+
+function onMapClickPickLocation(latlng) {
+  if (!state.isPickingLocation) return;
+  state.isPickingLocation = false;
+  elements.mapPickerBanner.classList.add('hidden');
+  if (elements.map) {
+    elements.map.getContainer().style.cursor = '';
+  }
+
+  const coordStr = `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
+  if (elements.newLocAddress) {
+    elements.newLocAddress.value = coordStr;
+  }
+  if (!elements.newLocName.value.trim()) {
+    elements.newLocName.value = 'My Office';
+  }
+
+  if (elements.newLocStatusMsg) {
+    elements.newLocStatusMsg.className = 'text-[11px] text-emerald-600 dark:text-emerald-400';
+    elements.newLocStatusMsg.textContent = `✓ Coordinates set from map: ${coordStr}`;
+    elements.newLocStatusMsg.classList.remove('hidden');
+  }
+
+  elements.locationsDialog.classList.add('open');
+}
+
+function handleAddNewLocation() {
+  const name = elements.newLocName.value.trim();
+  const addressQuery = elements.newLocAddress.value.trim();
+  const statusEl = elements.newLocStatusMsg;
+
+  if (!name) {
+    if (statusEl) {
+      statusEl.className = 'text-[11px] text-rose-500';
+      statusEl.textContent = 'Please enter a location name (e.g. My Office).';
+      statusEl.classList.remove('hidden');
+    }
+    elements.newLocName.focus();
+    return;
+  }
+
+  if (!addressQuery) {
+    if (statusEl) {
+      statusEl.className = 'text-[11px] text-rose-500';
+      statusEl.textContent = 'Please enter an address or click "Pick Point on Map".';
+      statusEl.classList.remove('hidden');
+    }
+    elements.newLocAddress.focus();
+    return;
+  }
+
+  const coordMatch = addressQuery.match(/^(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)$/);
+  if (coordMatch) {
+    const lat = parseFloat(coordMatch[1]);
+    const lng = parseFloat(coordMatch[3]);
+    createAndSaveLocation(name, addressQuery, lat, lng);
+    return;
+  }
+
+  geocodeAddress(addressQuery).then(res => {
+    if (res) {
+      createAndSaveLocation(name, res.display, res.lat, res.lng);
+    }
+  });
+}
+
+function createAndSaveLocation(name, address, lat, lng) {
+  const newLoc = {
+    id: 'loc-' + Date.now(),
+    name,
+    address,
+    lat,
+    lng
+  };
+
+  state.customLocations.push(newLoc);
+  saveCustomLocations();
+
+  elements.newLocName.value = '';
+  elements.newLocAddress.value = '';
+  if (elements.newLocStatusMsg) {
+    elements.newLocStatusMsg.className = 'text-[11px] text-emerald-600 dark:text-emerald-400';
+    elements.newLocStatusMsg.textContent = `✓ Successfully added "${name}" as a custom location row!`;
+    elements.newLocStatusMsg.classList.remove('hidden');
+  }
+
+  setActiveLocation(newLoc.id);
+}
+
+function deleteCustomLocation(id) {
+  state.customLocations = state.customLocations.filter(l => l.id !== id);
+  if (state.activeLocationId === id) {
+    setActiveLocation('NONE');
+  } else {
+    saveCustomLocations();
+  }
+}
+
+function zoomToCustomLocation(id) {
+  const loc = state.customLocations.find(l => l.id === id);
+  if (loc && elements.map) {
+    setActiveLocation(loc.id);
+    elements.locationsDialog.classList.remove('open');
+    elements.map.setView([loc.lat, loc.lng], 16);
+    if (state.targetMarker) state.targetMarker.openPopup();
+  }
 }
 
 /**
@@ -203,8 +845,12 @@ function initMap() {
   }).addTo(elements.map);
   elements.markerStandardLayer = L.featureGroup();
 
-  // Background map click clears active selection
+  // Background map click clears active selection or captures picked coordinates
   elements.map.on('click', (e) => {
+    if (state.isPickingLocation) {
+      onMapClickPickLocation(e.latlng);
+      return;
+    }
     if (!e.originalEvent._handledByLayer) {
       clearSelection();
     }
@@ -287,6 +933,8 @@ function processFeatures(features) {
     const brz = (attrs.BRZ_NAME || '').trim();
     if (brz) brzSet.add(brz);
 
+    const rateInfo = parseZoneRateSchedule(attrs.HTML_ZONE_RATE || '', attrs.ENFORCEABLE_TIME || '');
+
     const zoneObj = {
       id: attrs.OBJECTID || index,
       zoneNumber: attrs.PARKING_ZONE !== undefined && attrs.PARKING_ZONE !== null ? String(attrs.PARKING_ZONE) : 'N/A',
@@ -304,6 +952,9 @@ function processFeatures(features) {
       maxTime: attrs.MAX_TIME ? Number(attrs.MAX_TIME) : null,
       enforceableTime: (attrs.ENFORCEABLE_TIME || '').trim(),
       htmlRates: attrs.HTML_ZONE_RATE || '',
+      rateInfo,
+      distanceToTarget: null,
+      walkingMinutes: null,
       restrictTime: (attrs.PARKING_RESTRICT_TIME || 'none').trim(),
       restrictType: (attrs.PARKING_RESTRICT_TYPE || 'none').trim(),
       noParking: attrs.NO_PARKING || null,
@@ -342,19 +993,151 @@ function populateBrzFilter(brzList) {
 function applyFilterAndRender() {
   const query = state.searchQuery.toLowerCase().trim();
   const brzFilter = state.currentFilterBRZ;
+  const priceFilter = state.priceFilter;
+  const rateMode = state.rateMode;
+  const activeLoc = state.activeLocation;
+  const maxRadius = state.maxRadius === 'ALL' ? Infinity : Number(state.maxRadius);
 
-  state.filteredZones = state.parsedZones.filter(z => {
-    if (brzFilter !== 'ALL' && z.brzName !== brzFilter) return false;
-    if (query) {
-      return z.zoneNumber.toLowerCase().includes(query) ||
-             z.address.toLowerCase().includes(query) ||
-             z.brzName.toLowerCase().includes(query);
+  const targetLatLng = activeLoc ? L.latLng(activeLoc.lat, activeLoc.lng) : null;
+
+  // 1. Calculate distance and walking duration to active target destination
+  state.parsedZones.forEach(zone => {
+    if (targetLatLng && elements.map) {
+      zone.distanceToTarget = elements.map.distance(targetLatLng, zone.midpoint);
+      zone.walkingMinutes = Math.max(1, Math.round(zone.distanceToTarget / 80));
+    } else {
+      zone.distanceToTarget = null;
+      zone.walkingMinutes = null;
     }
+  });
+
+  // 2. Filter zones by area, search, radius, and price threshold
+  state.filteredZones = state.parsedZones.filter(z => {
+    // Area (BRZ) Filter
+    if (brzFilter !== 'ALL' && z.brzName !== brzFilter) return false;
+
+    // Search Query Filter
+    if (query) {
+      const match = z.zoneNumber.toLowerCase().includes(query) ||
+                    z.address.toLowerCase().includes(query) ||
+                    z.brzName.toLowerCase().includes(query);
+      if (!match) return false;
+    }
+
+    // Walking Radius Filter (if target destination active)
+    if (activeLoc && z.distanceToTarget !== null) {
+      if (z.distanceToTarget > maxRadius) return false;
+    }
+
+    // Price Filtration
+    const rateInfo = z.rateInfo;
+    const effectiveRate = rateMode === 'live' ? rateInfo.currentRate : rateInfo.maxRate;
+    const isFree = rateMode === 'live' ? rateInfo.isCurrentlyFree : effectiveRate === 0;
+
+    if (priceFilter === 'free') {
+      if (!isFree && effectiveRate > 0) return false;
+    } else if (priceFilter !== 'ALL') {
+      const maxAllowed = parseFloat(priceFilter);
+      if (effectiveRate > maxAllowed) return false;
+    }
+
     return true;
   });
 
+  // 3. Sort zones by user selection
+  if (activeLoc) {
+    state.filteredZones.sort((a, b) => {
+      const rateA = rateMode === 'live' ? a.rateInfo.currentRate : a.rateInfo.maxRate;
+      const rateB = rateMode === 'live' ? b.rateInfo.currentRate : b.rateInfo.maxRate;
+      const distA = a.distanceToTarget !== null ? a.distanceToTarget : Infinity;
+      const distB = b.distanceToTarget !== null ? b.distanceToTarget : Infinity;
+
+      if (state.sortMode === 'closest') {
+        return distA - distB;
+      }
+      if (state.sortMode === 'cheapest') {
+        if (rateA !== rateB) return rateA - rateB;
+        return distA - distB;
+      }
+      // 'closest_cheapest' (Best Value composite ranking)
+      if (state.maxRadius !== 'ALL') {
+        if (rateA !== rateB) return rateA - rateB;
+        return distA - distB;
+      } else {
+        const scoreA = (distA / 500) * 0.4 + (rateA / 4) * 0.6;
+        const scoreB = (distB / 500) * 0.4 + (rateB / 4) * 0.6;
+        return scoreA - scoreB;
+      }
+    });
+  }
+
   renderMapFeatures();
+  renderBestValuePanel();
   updateCountDisplay();
+}
+
+function renderBestValuePanel() {
+  if (!elements.bestValuePanel || !elements.bestValueList) return;
+
+  if (!state.activeLocation || !state.showBestValuePanel || state.filteredZones.length === 0) {
+    elements.bestValuePanel.classList.add('hidden');
+    return;
+  }
+
+  elements.bestValuePanel.classList.remove('hidden');
+  elements.bestValueTitle.textContent = `Best Value Near ${state.activeLocation.name}`;
+  elements.bestValueCountBadge.textContent = `${state.filteredZones.length} match${state.filteredZones.length === 1 ? '' : 'es'}`;
+
+  const topItems = state.filteredZones.slice(0, 5);
+  elements.bestValueList.innerHTML = '';
+
+  topItems.forEach((zone, idx) => {
+    const rateBadge = getPriceBadgeHtml(zone.rateInfo, state.rateMode);
+    const distMeters = Math.round(zone.distanceToTarget || 0);
+    const walkMins = zone.walkingMinutes || 1;
+
+    const div = document.createElement('div');
+    div.className = 'best-value-item rounded-lg border border-border bg-card p-2.5 shadow-sm cursor-pointer flex flex-col gap-1.5 hover:border-primary transition-all';
+    div.innerHTML = `
+      <div class="flex items-center justify-between gap-1">
+        <div class="flex items-center gap-1.5">
+          <span class="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-[10px]">#${idx + 1}</span>
+          <span class="font-bold text-foreground text-xs">Zone ${zone.zoneNumber}</span>
+        </div>
+        ${rateBadge}
+      </div>
+      <div class="text-[11px] text-foreground font-medium truncate" title="${zone.address}">${zone.address}</div>
+      <div class="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/50">
+        <span class="flex items-center gap-1 font-semibold text-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3-2 4-2 6.5v4"/><path d="M14 20v-2.38c0-2.12-1.03-3.12-1-5.62.03-2.72 1.49-6 4.5-6 1.87 0 2.5 1.8 2.5 3.5 0 3-2 4-2 6.5v4"/></svg>
+          ${distMeters}m • ~${walkMins} min walk
+        </span>
+        <span>${zone.zoneCapacity} stalls</span>
+      </div>
+    `;
+
+    div.addEventListener('click', () => {
+      selectZone(zone, false);
+      if (zone.markerLayer) {
+        zone.markerLayer.openPopup();
+      }
+      zoomToZone(zone);
+    });
+
+    elements.bestValueList.appendChild(div);
+  });
+
+  refreshIcons();
+}
+
+function zoomToZone(zone) {
+  if (!elements.map || !zone) return;
+  if (zone.polylineLayer && zone.polylineLayer.length > 0) {
+    const group = L.featureGroup(zone.polylineLayer);
+    elements.map.fitBounds(group.getBounds(), { padding: [70, 70], maxZoom: 18 });
+  } else {
+    elements.map.setView(zone.midpoint, 18);
+  }
 }
 
 function getZoneColor(priceZone) {
@@ -425,7 +1208,7 @@ function renderMapFeatures() {
     });
 
     const marker = L.marker(zone.midpoint, { icon: customPinIcon });
-    marker.bindPopup(createPopupHtml(zone), { maxWidth: 280 });
+    marker.bindPopup(createPopupHtml(zone), { maxWidth: 290 });
 
     marker.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
@@ -453,27 +1236,37 @@ function renderMapFeatures() {
 }
 
 /**
- * Popup HTML (shadcn Popover card style)
+ * Popup HTML (shadcn Popover card style with Price & Walking distance)
  */
 function createPopupHtml(zone) {
+  const rateBadge = getPriceBadgeHtml(zone.rateInfo, state.rateMode);
+  const distanceHtml = zone.distanceToTarget !== null ? `
+    <div class="flex items-center gap-1.5 text-xs font-semibold text-primary bg-primary/5 rounded-md px-2 py-1 border border-primary/20">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3-2 4-2 6.5v4"/><path d="M14 20v-2.38c0-2.12-1.03-3.12-1-5.62.03-2.72 1.49-6 4.5-6 1.87 0 2.5 1.8 2.5 3.5 0 3-2 4-2 6.5v4"/></svg>
+      <span>${Math.round(zone.distanceToTarget)}m • ~${zone.walkingMinutes} min walk from ${state.activeLocation ? state.activeLocation.name : 'Target'}</span>
+    </div>
+  ` : '';
+
   return `
-    <div class="p-3.5 flex flex-col gap-2 min-w-[220px]">
+    <div class="p-3.5 flex flex-col gap-2 min-w-[240px]">
       <div class="flex items-center justify-between gap-2">
         <span class="inline-flex items-center rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-bold text-primary">
           Zone #${zone.zoneNumber}
         </span>
-        <span class="text-[11px] font-medium text-muted-foreground">${zone.stallType}</span>
+        ${rateBadge}
       </div>
       <div class="font-semibold text-xs text-foreground leading-snug">${zone.address}</div>
+      ${distanceHtml}
       <div class="text-[11px] text-muted-foreground flex flex-col gap-0.5 border-t border-border pt-1.5 mt-0.5">
-        <div><strong>Capacity:</strong> ${zone.zoneCapacity} stalls (${zone.segLength}m)</div>
+        <div><strong>Live Status:</strong> ${zone.rateInfo?.currentSlotLabel || 'Check signage'}</div>
+        <div><strong>Capacity:</strong> ${zone.zoneCapacity} stalls (${zone.segLength}m) • ${zone.stallType}</div>
         <div><strong>Area:</strong> ${zone.brzName}</div>
       </div>
       <button 
         onclick="window.cpaApp.openZoneDetails('${zone.id}')"
         class="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors"
       >
-        <span>More Details</span>
+        <span>Full Details &amp; Rates</span>
         <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
       </button>
     </div>
@@ -612,6 +1405,25 @@ function renderDetailsSheet(zone) {
             <span class="font-semibold text-foreground truncate block">${zone.brzName}</span>
           </div>
         </div>
+      </div>
+
+      <!-- Live Parking Rate & Target Proximity Card -->
+      <div class="rounded-xl border border-border bg-card p-4 shadow-sm flex flex-col gap-2">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Current Live Rate</span>
+          ${getPriceBadgeHtml(zone.rateInfo, 'live')}
+        </div>
+        <div class="text-xs font-semibold text-foreground">${zone.rateInfo?.currentSlotLabel || 'Free parking / check posted signs'}</div>
+        <div class="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-border">
+          <span>Peak Daytime Rate:</span>
+          <span class="font-bold text-foreground">$${(zone.rateInfo?.maxRate || 0).toFixed(2)} / hr</span>
+        </div>
+        ${zone.distanceToTarget !== null ? `
+          <div class="mt-1 flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs font-semibold text-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3-2 4-2 6.5v4"/><path d="M14 20v-2.38c0-2.12-1.03-3.12-1-5.62.03-2.72 1.49-6 4.5-6 1.87 0 2.5 1.8 2.5 3.5 0 3-2 4-2 6.5v4"/></svg>
+            <span>${Math.round(zone.distanceToTarget)}m (~${zone.walkingMinutes} min walk) from ${state.activeLocation ? state.activeLocation.name : 'Target'}</span>
+          </div>
+        ` : ''}
       </div>
 
       <!-- Quick Metrics Grid -->
@@ -862,6 +1674,150 @@ function setupEventListeners() {
     applyFilterAndRender();
   });
 
+  // Target Location Dropdown
+  if (elements.locationSelect) {
+    elements.locationSelect.addEventListener('change', (e) => {
+      setActiveLocation(e.target.value);
+    });
+  }
+
+  // Manage Locations Modal Button
+  if (elements.btnManageLocations) {
+    elements.btnManageLocations.addEventListener('click', () => {
+      renderLocationsTable();
+      elements.locationsDialog.classList.add('open');
+    });
+  }
+
+  // Locations Modal Close & Backdrop
+  if (elements.locationsCloseBtn) {
+    elements.locationsCloseBtn.addEventListener('click', () => {
+      elements.locationsDialog.classList.remove('open');
+    });
+  }
+
+  if (elements.locationsDialog) {
+    elements.locationsDialog.addEventListener('click', (e) => {
+      if (e.target === elements.locationsDialog) {
+        elements.locationsDialog.classList.remove('open');
+      }
+    });
+  }
+
+  // Radius Select
+  if (elements.radiusSelect) {
+    elements.radiusSelect.addEventListener('change', (e) => {
+      state.maxRadius = e.target.value === 'ALL' ? 'ALL' : Number(e.target.value);
+      if (state.activeLocation) renderTargetLocationOnMap(state.activeLocation);
+      applyFilterAndRender();
+    });
+  }
+
+  // Sort Criterion Select
+  if (elements.sortSelect) {
+    elements.sortSelect.addEventListener('change', (e) => {
+      state.sortMode = e.target.value;
+      applyFilterAndRender();
+    });
+  }
+
+  // Price Filter Dropdown
+  if (elements.priceFilter) {
+    elements.priceFilter.addEventListener('change', (e) => {
+      state.priceFilter = e.target.value;
+      applyFilterAndRender();
+    });
+  }
+
+  // Rate Mode Select (Live Now vs Peak)
+  if (elements.rateModeSelect) {
+    elements.rateModeSelect.addEventListener('change', (e) => {
+      state.rateMode = e.target.value;
+      applyFilterAndRender();
+    });
+  }
+
+  // Reset Filters Button
+  if (elements.btnResetFilters) {
+    elements.btnResetFilters.addEventListener('click', () => resetAllFilters());
+  }
+
+  // Toggle Recommendations Panel Button
+  if (elements.btnToggleRecommendations) {
+    elements.btnToggleRecommendations.addEventListener('click', () => {
+      state.showBestValuePanel = !state.showBestValuePanel;
+      elements.bestValuePanel.classList.toggle('hidden', !state.showBestValuePanel);
+    });
+  }
+
+  // Best Value Panel Close Button
+  if (elements.bestValueCloseBtn) {
+    elements.bestValueCloseBtn.addEventListener('click', () => {
+      state.showBestValuePanel = false;
+      elements.bestValuePanel.classList.add('hidden');
+    });
+  }
+
+  // Location Modal Actions: Pick Point on Map
+  if (elements.btnPickMap) {
+    elements.btnPickMap.addEventListener('click', () => startMapLocationPicker());
+  }
+
+  if (elements.btnCancelPicker) {
+    elements.btnCancelPicker.addEventListener('click', () => cancelMapLocationPicker());
+  }
+
+  // Location Modal Actions: Find Address
+  if (elements.btnSearchAddress) {
+    elements.btnSearchAddress.addEventListener('click', () => {
+      geocodeAddress(elements.newLocAddress.value.trim());
+    });
+  }
+
+  // Location Modal Actions: Use GPS
+  if (elements.btnUseGps) {
+    elements.btnUseGps.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        if (elements.newLocStatusMsg) {
+          elements.newLocStatusMsg.className = 'text-[11px] text-rose-500';
+          elements.newLocStatusMsg.textContent = 'Geolocation is not supported by your browser.';
+          elements.newLocStatusMsg.classList.remove('hidden');
+        }
+        return;
+      }
+      if (elements.newLocStatusMsg) {
+        elements.newLocStatusMsg.className = 'text-[11px] text-amber-600 dark:text-amber-400';
+        elements.newLocStatusMsg.textContent = 'Locating device GPS...';
+        elements.newLocStatusMsg.classList.remove('hidden');
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          elements.newLocAddress.value = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          if (!elements.newLocName.value.trim()) {
+            elements.newLocName.value = 'My Current Location';
+          }
+          if (elements.newLocStatusMsg) {
+            elements.newLocStatusMsg.className = 'text-[11px] text-emerald-600 dark:text-emerald-400';
+            elements.newLocStatusMsg.textContent = `✓ Current GPS coordinates found: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+          }
+        },
+        (err) => {
+          if (elements.newLocStatusMsg) {
+            elements.newLocStatusMsg.className = 'text-[11px] text-rose-500';
+            elements.newLocStatusMsg.textContent = `GPS error: ${err.message}. You can pick on map instead.`;
+          }
+        }
+      );
+    });
+  }
+
+  // Location Modal Actions: Add to Locations Button
+  if (elements.btnSaveLocation) {
+    elements.btnSaveLocation.addEventListener('click', () => handleAddNewLocation());
+  }
+
   // Layer Toggles
   elements.togglePins.addEventListener('change', (e) => {
     state.showPins = e.target.checked;
@@ -935,13 +1891,36 @@ function setupEventListeners() {
       elements.searchInput.select();
     }
     if (e.key === 'Escape') {
-      if (elements.settingsDialog.classList.contains('open')) {
+      if (state.isPickingLocation) {
+        cancelMapLocationPicker();
+      } else if (elements.settingsDialog.classList.contains('open')) {
         elements.settingsDialog.classList.remove('open');
+      } else if (elements.locationsDialog.classList.contains('open')) {
+        elements.locationsDialog.classList.remove('open');
       } else if (elements.detailsSheet.classList.contains('open')) {
         closeSheet();
       }
     }
   });
+}
+
+function resetAllFilters() {
+  state.priceFilter = 'ALL';
+  state.rateMode = 'live';
+  state.maxRadius = 500;
+  state.sortMode = 'closest_cheapest';
+  state.currentFilterBRZ = 'ALL';
+  state.searchQuery = '';
+
+  if (elements.priceFilter) elements.priceFilter.value = 'ALL';
+  if (elements.rateModeSelect) elements.rateModeSelect.value = 'live';
+  if (elements.radiusSelect) elements.radiusSelect.value = '500';
+  if (elements.sortSelect) elements.sortSelect.value = 'closest_cheapest';
+  if (elements.brzFilter) elements.brzFilter.value = 'ALL';
+  if (elements.searchInput) elements.searchInput.value = '';
+  if (elements.searchClearBtn) elements.searchClearBtn.classList.add('hidden');
+
+  setActiveLocation('NONE');
 }
 
 // Global API for inline onclicks
@@ -957,12 +1936,17 @@ window.cpaApp = {
     }
   },
   zoomToCurrentZone,
+  setActiveLocation,
+  deleteCustomLocation,
+  zoomToCustomLocation,
+  resetAllFilters,
 };
 
 // Bootstrap App
 document.addEventListener('DOMContentLoaded', () => {
   initTheme();
   initMap();
+  initCustomLocations();
   setupEventListeners();
   fetchParkingData();
   refreshIcons();
