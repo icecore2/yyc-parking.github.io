@@ -1,0 +1,32 @@
+name: Parking Data Provider Ingestion & Immediate Sync
+
+on:
+  schedule:
+    # Run automatically every 30 minutes to fetch latest rates & status
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: "parking-sync"
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Fetch Provider Endpoints & Push Diffs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run Parking Sync Service
+        run: npm run sync:run
+        env:
+          FIREBASE_ADMIN_PROJECT_ID: ${{ secrets.FIREBASE_ADMIN_PROJECT_ID || vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          FIREBASE_ADMIN_CLIENT_EMAIL: ${{ secrets.FIREBASE_ADMIN_CLIENT_EMAIL }}
+          FIREBASE_ADMIN_PRIVATE_KEY: ${{ secrets.FIREBASE_ADMIN_PRIVATE_KEY }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}

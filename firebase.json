@@ -1,0 +1,23 @@
+{
+  "hosting": {
+    "public": "webapp/out",
+    "cleanUrls": true,
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  },
+  "apphosting": {
+    "backendId": "calgary-parking-map",
+    "rootDir": "webapp",
+    "ignore": [
+      "node_modules",
+      ".next",
+      ".git",
+      "firebase-debug.log",
+      "firebase-debug.*.log",
+      "functions"
+    ]
+  }
+}

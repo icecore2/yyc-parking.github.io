@@ -1,0 +1,41 @@
+name: iOS Build & Tests
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-build.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-build.yml"
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    name: Build & Test iOS App
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode Version
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.app || sudo xcode-select -s /Applications/Xcode_16.0.app || xcode-select -p
+
+      - name: Run Core Unit Tests via Swift Package
+        run: |
+          cd ios
+          swift test
+
+      - name: Build iOS Application for Simulator
+        run: |
+          xcodebuild \
+            -project ios/CalgaryParkingMap.xcodeproj \
+            -scheme CalgaryParkingMap \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            clean build \
+            CODE_SIGNING_ALLOWED=NO

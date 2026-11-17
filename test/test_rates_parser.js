@@ -263,4 +263,84 @@ assert.strictEqual(hist.initialPeak, 3.50);
 assert.strictEqual(hist.netChange, 0.75);
 assert.strictEqual(hist.percentChange, '21.4');
 
-console.log('✔ All 5 test suites passed cleanly with 0 errors!');
+// Test 6: Price Filtration Engine
+function filterZonesByPrice(zones, priceFilter, rateMode = 'max') {
+  return zones.filter(z => {
+    const rateInfo = z.rateInfo;
+    const maxRate = (rateInfo && typeof rateInfo.maxRate === 'number') ? rateInfo.maxRate : 0;
+    const currentRate = (rateInfo && typeof rateInfo.currentRate === 'number') ? rateInfo.currentRate : 0;
+    const isLiveFree = rateInfo ? (rateInfo.isCurrentlyFree || currentRate === 0) : true;
+    const isPeakFree = maxRate === 0;
+
+    if (priceFilter === 'free') {
+      if (rateMode === 'live') {
+        if (!isLiveFree) return false;
+      } else {
+        if (!isPeakFree) return false;
+      }
+    } else if (priceFilter !== 'ALL') {
+      const maxAllowed = parseFloat(priceFilter);
+      if (maxRate > maxAllowed) return false;
+    }
+
+    return true;
+  });
+}
+
+const testZones = [
+  { id: 'free-lot', rateInfo: { maxRate: 0, currentRate: 0, isCurrentlyFree: true } },
+  { id: 'zone-1dollar', rateInfo: { maxRate: 1.0, currentRate: 0, isCurrentlyFree: true } },
+  { id: 'zone-2dollar', rateInfo: { maxRate: 2.0, currentRate: 1.0, isCurrentlyFree: false } },
+  { id: 'zone-225', rateInfo: { maxRate: 2.25, currentRate: 1.0, isCurrentlyFree: false } },
+  { id: 'zone-350', rateInfo: { maxRate: 3.50, currentRate: 1.0, isCurrentlyFree: false } },
+  { id: 'zone-425-onstreet', rateInfo: { maxRate: 4.25, currentRate: 1.0, isCurrentlyFree: false } }, // Saturday promo $1/hr
+  { id: 'zone-450-parkade', rateInfo: { maxRate: 4.50, currentRate: 3.5, isCurrentlyFree: false } },
+  { id: 'zone-600-commercial', rateInfo: { maxRate: 6.00, currentRate: 4.5, isCurrentlyFree: false } },
+  { id: 'zone-no-rate', rateInfo: null } // Edge case: null rateInfo
+];
+
+// 6A. 'ALL' includes all zones
+assert.strictEqual(filterZonesByPrice(testZones, 'ALL', 'max').length, 9, 'ALL must return all 9 zones');
+
+// 6B. 'free' in max mode returns only free-lot and no-rate (where maxRate === 0)
+const freeMax = filterZonesByPrice(testZones, 'free', 'max');
+assert.deepStrictEqual(freeMax.map(z => z.id), ['free-lot', 'zone-no-rate'], 'Peak free should only include 0 maxRate');
+
+// 6C. 'free' in live mode includes zones currently free
+const freeLive = filterZonesByPrice(testZones, 'free', 'live');
+assert.ok(freeLive.some(z => z.id === 'zone-1dollar'), 'Zone 1dollar is free right now in live mode');
+assert.ok(!freeLive.some(z => z.id === 'zone-425-onstreet'), 'Zone 425 charging $1 right now is not free');
+
+// 6D. Price <= $1.00/hr
+const under1 = filterZonesByPrice(testZones, '1', 'max');
+assert.deepStrictEqual(under1.map(z => z.id), ['free-lot', 'zone-1dollar', 'zone-no-rate'], '<= 1.00 must include free and $1.00');
+
+// 6E. Price <= $2.00/hr (Ensuring $4.25 on-street zone is excluded even if currentRate is $1 on Saturday!)
+const under2 = filterZonesByPrice(testZones, '2', 'max');
+assert.ok(under2.some(z => z.id === 'zone-2dollar'), '<= 2.00 must include $2.00 zone');
+assert.ok(!under2.some(z => z.id === 'zone-225'), '<= 2.00 must exclude $2.25 zone');
+assert.ok(!under2.some(z => z.id === 'zone-425-onstreet'), '<= 2.00 must EXCLUDE $4.25 zone even if off-peak');
+assert.deepStrictEqual(under2.map(z => z.id), ['free-lot', 'zone-1dollar', 'zone-2dollar', 'zone-no-rate']);
+
+// Verify under <= 2.00 in live mode ALSO excludes $4.25 zone
+const under2Live = filterZonesByPrice(testZones, '2', 'live');
+assert.ok(!under2Live.some(z => z.id === 'zone-425-onstreet'), '<= 2.00 in live mode must STILL exclude $4.25 zone');
+
+// 6F. Price <= $3.00/hr
+const under3 = filterZonesByPrice(testZones, '3', 'max');
+assert.ok(under3.some(z => z.id === 'zone-225'), '<= 3.00 must include $2.25 zone');
+assert.ok(!under3.some(z => z.id === 'zone-350'), '<= 3.00 must exclude $3.50 zone');
+
+// 6G. Price <= $4.00/hr
+const under4 = filterZonesByPrice(testZones, '4', 'max');
+assert.ok(under4.some(z => z.id === 'zone-350'), '<= 4.00 must include $3.50 zone');
+assert.ok(!under4.some(z => z.id === 'zone-425-onstreet'), '<= 4.00 must exclude $4.25 zone');
+
+// 6H. Price <= $5.00/hr
+const under5 = filterZonesByPrice(testZones, '5', 'max');
+assert.ok(under5.some(z => z.id === 'zone-425-onstreet'), '<= 5.00 must include $4.25 zone');
+assert.ok(under5.some(z => z.id === 'zone-450-parkade'), '<= 5.00 must include $4.50 zone');
+assert.ok(!under5.some(z => z.id === 'zone-600-commercial'), '<= 5.00 must exclude $6.00 commercial zone');
+
+console.log('✔ All 6 test suites passed cleanly with 0 errors!');
+

@@ -73,6 +73,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+select option {
+  background-color: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+}
+
 /* Custom Scrollbar in Shadcn style */
 ::-webkit-scrollbar {
   width: 6px;
@@ -460,12 +465,14 @@ body {
   color: #22d3ee;
 }
 
-.badge-rate-med {
+.badge-rate-med,
+.badge-rate-mid {
   background-color: rgba(245, 158, 11, 0.15);
   color: #d97706;
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
-.dark .badge-rate-med {
+.dark .badge-rate-med,
+.dark .badge-rate-mid {
   color: #fbbf24;
 }
 

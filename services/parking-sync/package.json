@@ -1,0 +1,20 @@
+{
+  "name": "parking-sync-service",
+  "version": "1.0.0",
+  "description": "Standalone service for fetching parking provider data, local SQLite staging, diff detection, and immediate remote push",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "sync": "node --experimental-strip-types src/index.ts",
+    "sync:daemon": "node --experimental-strip-types src/index.ts --watch",
+    "test": "node --experimental-strip-types test/test_sync_engine.ts"
+  },
+  "keywords": [
+    "parking",
+    "calgary",
+    "sync",
+    "sqlite",
+    "diff"
+  ],
+  "license": "MIT"
+}

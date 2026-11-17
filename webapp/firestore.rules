@@ -1,0 +1,353 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// 1. Collection: users/{uid}
+//    - Document ID: Firebase Auth UID of the user.
+//    - Fields:
+//      - uid: string (required, immutable) - Must match document ID & request.auth.uid.
+//      - email: string | null (required key, immutable by client) - User's email address.
+//      - displayName: string | null (optional, mutable) - User's display name (max 100 chars).
+//      - photoURL: string | null (optional, mutable) - Profile avatar URL (max 2048 chars).
+//      - tier: string (required, immutable by client) - Subscription tier ('free' or 'pro').
+//              Must default to 'free' upon creation. Escalation to 'pro' is reserved
+//              exclusively for server-side Firebase Admin / Stripe webhooks.
+//      - createdAt: number | timestamp (required, immutable) - Creation time in ms or timestamp.
+//
+// 2. Collection: users/{uid}/favorites/{favoriteId}
+//    - Document ID: Unique favorite identifier.
+//    - Fields:
+//      - id: string (optional, immutable) - Spot ID matching favoriteId (max 100 chars).
+//      - zoneId: string (required) - Parking zone identifier (1 to 100 chars).
+//      - label: string (required) - User label e.g., "Work Office", "Gym" (1 to 150 chars).
+//      - address: string (optional) - Physical address / street location (max 250 chars).
+//      - hourlyRate: number (optional) - Parking rate in dollars per hour (>= 0, <= 1000).
+//      - coordinates: list | map (required) - Geographic coordinates:
+//                     [longitude, latitude] list of 2 numbers OR map with lat/lng or latitude/longitude.
+//      - provider: string (optional) - Operator / provider identifier (max 50 chars).
+//      - notes: string (optional) - Personal parking notes (max 1000 chars).
+//      - createdAt: number | timestamp (optional, immutable) - Timestamp.
+//
+// 3. Collection: users/{uid}/sessions/{sessionId}
+//    - Document ID: Unique parking session identifier.
+//    - Fields:
+//      - id: string (optional, immutable) - Session ID matching sessionId (max 100 chars).
+//      - zoneId: string (required) - Parking zone identifier (1 to 100 chars).
+//      - address: string (optional) - Parking address / location (max 250 chars).
+//      - startTime: number | timestamp (required, immutable) - Session start time (> 0).
+//      - durationHours: number (required) - Duration in hours (0 < duration <= 720).
+//      - hourlyRate: number (optional) - Rate per hour in dollars (>= 0, <= 1000).
+//      - totalCostDollars: number (required) - Total cost in dollars (>= 0, <= 10000).
+//      - expiryTime: number | timestamp (optional) - Session expiry time (> 0).
+//      - alertLeadMinutes: number (optional) - Notification lead time in minutes (0 to 1440).
+//      - active: bool (optional) - Active session flag.
+//      - notes: string (optional) - Session notes (max 1000 chars).
+//      - createdAt: number | timestamp (optional, immutable) - Creation timestamp.
+//
+// 4. Collection: parking_data/{documentId}
+//    - Document ID: Unique parking record identifier (e.g., 'parkplus_1008', 'parkade_lot54', 'impark_316').
+//    - Fields:
+//      - id: string - Global unique record identifier.
+//      - externalId: string - Provider-specific identifier.
+//      - provider_name: string - Dedicated provider name column ('MyParking', 'Parkade', 'Impark', 'Indigo Neo', 'Precise ParkLink', 'Calgary Transit').
+//      - providerId: string - Provider slug identifier.
+//      - title: string - Display title of the parking spot or zone.
+//      - address: string - Street address.
+//      - category: string - Category ('MUNICIPAL', 'COMMERCIAL', 'TRANSIT').
+//      - stallCount: number - Available stall count.
+//      - stallType: string - Stall type (e.g., 'Parallel', 'Angle').
+//      - brz: string (optional) - Business Revitalization Zone.
+//      - priceZone: string (optional) - Price zone name.
+//      - maxStayHours: number | null (optional) - Max stay permitted.
+//      - enforceableHours: string | null (optional) - Enforceable hours description.
+//      - activeRate: number - Current hourly rate.
+//      - isCurrentlyFree: bool - Whether parking is currently free.
+//      - rateSchedule: list - List of rate period maps.
+//      - coordinates: list - Geographic coordinates [longitude, latitude].
+//      - geometry: map | null (optional) - GeoJSON geometry.
+//      - restrictions: list - Restriction descriptions.
+//      - paymentApp: string | null (optional) - Payment application name.
+//      - paymentUrl: string | null (optional) - Payment URL.
+//      - contentHash: string - Hash for sync diffing.
+//      - last_synced_at: number - Timestamp of last sync in epoch ms.
+//    - Access: Publicly readable by all users (authenticated and unauthenticated).
+//      Client writes (create, update, delete) are strictly forbidden; data synchronization
+//      is handled exclusively via server-side Firebase Admin SDK.
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the request is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the current authenticated user matches the specified userId
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if the document contains all required keys
+    function hasRequiredFields(requiredKeys) {
+      return request.resource.data.keys().hasAll(requiredKeys);
+    }
+
+    // Check if the document contains only permitted keys
+    function hasOnlyAllowedFields(allowedKeys) {
+      return request.resource.data.keys().hasOnly(allowedKeys);
+    }
+
+    // Ensure specific fields were not altered in the update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // Validate email format
+    function isValidEmail(email) {
+      return email is string &&
+        email.size() <= 254 &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Validate URL format
+    function isValidUrl(url) {
+      return url is string &&
+        url.size() <= 2048 &&
+        (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // Validate coordinates as either [lng, lat] / [lat, lng] list of 2 numbers or a lat/lng map
+    function isValidCoordinates(coords) {
+      return (
+        coords is list &&
+        coords.size() == 2 &&
+        coords[0] is number && coords[0] >= -180.0 && coords[0] <= 180.0 &&
+        coords[1] is number && coords[1] >= -180.0 && coords[1] <= 180.0
+      ) || (
+        coords is map && (
+          (
+            'lat' in coords && 'lng' in coords &&
+            coords.lat is number && coords.lat >= -90.0 && coords.lat <= 90.0 &&
+            coords.lng is number && coords.lng >= -180.0 && coords.lng <= 180.0
+          ) || (
+            'latitude' in coords && 'longitude' in coords &&
+            coords.latitude is number && coords.latitude >= -90.0 && coords.latitude <= 90.0 &&
+            coords.longitude is number && coords.longitude >= -180.0 && coords.longitude <= 180.0
+          )
+        )
+      );
+    }
+
+    // Check timestamp or positive epoch millis
+    function isValidTimeField(val) {
+      return (val is number && val > 0) || val is timestamp;
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    // Validate User Profile document structure and constraints
+    function isValidUserProfile(data, uid) {
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'tier', 'createdAt']) &&
+        hasRequiredFields(['uid', 'email', 'tier', 'createdAt']) &&
+        data.uid is string &&
+        data.uid == uid &&
+        data.uid.size() <= 128 &&
+        (
+          data.email == null ||
+          (data.email is string && isValidEmail(data.email))
+        ) &&
+        (
+          !('displayName' in data) ||
+          data.displayName == null ||
+          (data.displayName is string && data.displayName.size() <= 100)
+        ) &&
+        (
+          !('photoURL' in data) ||
+          data.photoURL == null ||
+          data.photoURL == '' ||
+          (data.photoURL is string && isValidUrl(data.photoURL))
+        ) &&
+        data.tier in ['free', 'pro'] &&
+        isValidTimeField(data.createdAt);
+    }
+
+    // Validate Favorite Spot document structure and constraints
+    function isValidFavorite(data, favoriteId) {
+      return hasOnlyAllowedFields([
+          'id', 'zoneId', 'label', 'address', 'hourlyRate',
+          'coordinates', 'provider', 'notes', 'createdAt'
+        ]) &&
+        hasRequiredFields(['zoneId', 'label', 'coordinates']) &&
+        (
+          !('id' in data) ||
+          (data.id is string && data.id == favoriteId && data.id.size() <= 100)
+        ) &&
+        data.zoneId is string &&
+        data.zoneId.size() > 0 &&
+        data.zoneId.size() <= 100 &&
+        data.label is string &&
+        data.label.size() > 0 &&
+        data.label.size() <= 150 &&
+        isValidCoordinates(data.coordinates) &&
+        (
+          !('address' in data) ||
+          (data.address is string && data.address.size() <= 250)
+        ) &&
+        (
+          !('hourlyRate' in data) ||
+          (data.hourlyRate is number && data.hourlyRate >= 0 && data.hourlyRate <= 1000)
+        ) &&
+        (
+          !('provider' in data) ||
+          (data.provider is string && data.provider.size() <= 50)
+        ) &&
+        (
+          !('notes' in data) ||
+          (data.notes is string && data.notes.size() <= 1000)
+        ) &&
+        (
+          !('createdAt' in data) ||
+          isValidTimeField(data.createdAt)
+        );
+    }
+
+    // Validate Parking Session document structure and constraints
+    function isValidSession(data, sessionId) {
+      return hasOnlyAllowedFields([
+          'id', 'zoneId', 'address', 'startTime', 'durationHours',
+          'hourlyRate', 'totalCostDollars', 'expiryTime', 'alertLeadMinutes',
+          'active', 'notes', 'createdAt'
+        ]) &&
+        hasRequiredFields(['zoneId', 'startTime', 'durationHours', 'totalCostDollars']) &&
+        (
+          !('id' in data) ||
+          (data.id is string && data.id == sessionId && data.id.size() <= 100)
+        ) &&
+        data.zoneId is string &&
+        data.zoneId.size() > 0 &&
+        data.zoneId.size() <= 100 &&
+        isValidTimeField(data.startTime) &&
+        data.durationHours is number &&
+        data.durationHours > 0 &&
+        data.durationHours <= 720 &&
+        data.totalCostDollars is number &&
+        data.totalCostDollars >= 0 &&
+        data.totalCostDollars <= 10000 &&
+        (
+          !('address' in data) ||
+          (data.address is string && data.address.size() <= 250)
+        ) &&
+        (
+          !('hourlyRate' in data) ||
+          (data.hourlyRate is number && data.hourlyRate >= 0 && data.hourlyRate <= 1000)
+        ) &&
+        (
+          !('expiryTime' in data) ||
+          isValidTimeField(data.expiryTime)
+        ) &&
+        (
+          !('alertLeadMinutes' in data) ||
+          (data.alertLeadMinutes is number && data.alertLeadMinutes >= 0 && data.alertLeadMinutes <= 1440)
+        ) &&
+        (
+          !('active' in data) ||
+          data.active is bool
+        ) &&
+        (
+          !('notes' in data) ||
+          (data.notes is string && data.notes.size() <= 1000)
+        ) &&
+        (
+          !('createdAt' in data) ||
+          isValidTimeField(data.createdAt)
+        );
+    }
+
+    // ===============================================================
+    // Rules Definition
+    // ===============================================================
+
+    // 1. User Profiles Collection
+    match /users/{uid} {
+      // Each authenticated user can read only their own profile (PII protected)
+      allow read: if isOwner(uid);
+
+      // Authenticated users can create their own profile defaulting to 'free' tier
+      allow create: if isOwner(uid) &&
+                       isValidUserProfile(request.resource.data, uid) &&
+                       request.resource.data.tier == 'free';
+
+      // Authenticated users can update non-billing fields (displayName, photoURL)
+      // They CANNOT modify uid, email, createdAt, or self-escalate tier to 'pro'
+      allow update: if isOwner(uid) &&
+                       isValidUserProfile(request.resource.data, uid) &&
+                       request.resource.data.tier == resource.data.tier &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL']);
+
+      // Profile deletion disallowed from client
+      allow delete: if false;
+
+      // 2. Favorites Subcollection
+      match /favorites/{favoriteId} {
+        // Only the profile owner can read their favorites
+        allow read: if isOwner(uid);
+
+        // Owner can create favorite spots with validated schema
+        allow create: if isOwner(uid) &&
+                         isValidFavorite(request.resource.data, favoriteId);
+
+        // Owner can update favorite spots with validated schema and immutable identity
+        allow update: if isOwner(uid) &&
+                         isValidFavorite(request.resource.data, favoriteId) &&
+                         areImmutableFieldsUnchanged(['id', 'createdAt']);
+
+        // Owner can delete their favorite spots
+        allow delete: if isOwner(uid);
+      }
+
+      // 3. Parking Sessions Subcollection
+      match /sessions/{sessionId} {
+        // Only the profile owner can read their parking sessions
+        allow read: if isOwner(uid);
+
+        // Owner can log a parking session with validated schema
+        allow create: if isOwner(uid) &&
+                         isValidSession(request.resource.data, sessionId);
+
+        // Owner can update parking sessions with validated schema and immutable identity
+        allow update: if isOwner(uid) &&
+                         isValidSession(request.resource.data, sessionId) &&
+                         areImmutableFieldsUnchanged(['id', 'startTime']);
+
+        // Owner can delete parking sessions
+        allow delete: if isOwner(uid);
+      }
+    }
+
+    // 4. Synchronized Parking Data Collection (Read-only for all clients)
+    match /parking_data/{documentId} {
+      // Anyone (public unauthenticated and authenticated users) can read parking zones
+      allow read: if true;
+
+      // Client writes (create, update, delete) are strictly forbidden;
+      // mutations are handled exclusively by the server-side parking sync service
+      // using the Firebase Admin SDK.
+      allow write: if false;
+    }
+
+    // 5. Default Deny: All other documents and collections are inaccessible
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

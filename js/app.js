@@ -29,7 +29,7 @@ const state = {
   
   // Price Filtration State
   priceFilter: 'ALL', // 'ALL', 'free', '1', '2', '3', '4', '5'
-  rateMode: 'live', // 'live' (current rate right now), 'max' (peak daytime rate)
+  rateMode: 'max', // 'max' (peak daytime rate), 'live' (current rate right now)
 
   // Custom Locations & Closest + Cheapest State
   customLocations: [],
@@ -1460,43 +1460,49 @@ async function fetchCommercialLots() {
     const res = await fetch('data/commercial_parking.json');
     if (!res.ok) return [];
     const list = await res.json();
-    return list.map(item => ({
-      id: item.id,
-      providerId: item.providerId,
-      facilityType: item.facilityType,
-      zoneNumber: item.paymentCode || item.lotNumber,
-      name: item.name,
-      address: item.address,
-      blockSide: 'Off-Street',
-      zoneType: item.facilityType === 'PARKADE' ? 'Commercial Parkade' : 'Commercial Surface Lot',
-      stallType: item.stallType || 'Standard',
-      zoneCapacity: item.capacity || 100,
-      segCapacity: item.capacity || 100,
-      zoneLength: 0,
-      segLength: 0,
-      status: 'Active',
-      brzName: item.address.includes('SW') ? 'Downtown SW / Beltline' : 'Downtown Core',
-      priceZone: 'Commercial',
-      maxTime: null,
-      enforceableTime: '24/7 Pay Parking',
-      htmlRates: item.ratesSummary,
-      heightLimit: item.heightLimit,
-      amenities: item.amenities || [],
-      operator: item.operator,
-      paymentApp: item.paymentApp,
-      paymentUrl: item.paymentUrl,
-      ratesSummary: item.ratesSummary,
-      rateInfo: {
-        currentRate: 4.5,
-        isCurrentlyFree: false,
-        isNoParking: false,
-        currentSlotLabel: item.ratesSummary,
-        minRate: 3.5,
-        maxRate: 6.0,
-        intervals: [
-          { day: 'Commercial Daily/Hourly Schedule', time: 'Mon–Sun', rate: item.ratesSummary }
-        ]
-      },
+    return list.map(item => {
+      let hourlyRate = item.facilityType === 'PARKADE' ? 5.0 : 4.0;
+      const hourlyMatch = (item.ratesSummary || '').match(/(?:Hourly|Weekday):\s*\$([0-9]+(?:\.[0-9]{2})?)/i) || (item.ratesSummary || '').match(/\$([0-9]+(?:\.[0-9]{2})?)\/hr/i);
+      if (hourlyMatch) {
+        hourlyRate = parseFloat(hourlyMatch[1]);
+      }
+      return {
+        id: item.id,
+        providerId: item.providerId,
+        facilityType: item.facilityType,
+        zoneNumber: item.paymentCode || item.lotNumber,
+        name: item.name,
+        address: item.address,
+        blockSide: 'Off-Street',
+        zoneType: item.facilityType === 'PARKADE' ? 'Commercial Parkade' : 'Commercial Surface Lot',
+        stallType: item.stallType || 'Standard',
+        zoneCapacity: item.capacity || 100,
+        segCapacity: item.capacity || 100,
+        zoneLength: 0,
+        segLength: 0,
+        status: 'Active',
+        brzName: item.address.includes('SW') ? 'Downtown SW / Beltline' : 'Downtown Core',
+        priceZone: 'Commercial',
+        maxTime: null,
+        enforceableTime: '24/7 Pay Parking',
+        htmlRates: item.ratesSummary,
+        heightLimit: item.heightLimit,
+        amenities: item.amenities || [],
+        operator: item.operator,
+        paymentApp: item.paymentApp,
+        paymentUrl: item.paymentUrl,
+        ratesSummary: item.ratesSummary,
+        rateInfo: {
+          currentRate: hourlyRate,
+          isCurrentlyFree: false,
+          isNoParking: false,
+          currentSlotLabel: item.ratesSummary,
+          minRate: Math.max(1.0, +(hourlyRate - 1.0).toFixed(2)),
+          maxRate: hourlyRate,
+          intervals: [
+            { day: 'Commercial Daily/Hourly Schedule', time: 'Mon–Sun', rate: item.ratesSummary }
+          ]
+        },
       distanceToTarget: null,
       walkingMinutes: null,
       restrictTime: 'none',
@@ -1601,6 +1607,12 @@ function parseOnStreetFeatures(features) {
   features.forEach((feat, index) => {
     const attrs = feat.attributes || {};
     const geom = feat.geometry || {};
+    
+    // Ignore removed, inactive, or decommissioned zones with no valid operation
+    const status = (attrs.STATUS || 'Active').trim();
+    if (status.toLowerCase() === 'removed' || status.toLowerCase() === 'inactive') {
+      return;
+    }
     
     let paths = geom.paths;
     if (!paths && geom.coordinates) {
@@ -1795,14 +1807,20 @@ function applyFilterAndRender() {
 
     // Price Filtration
     const rateInfo = z.rateInfo;
-    const effectiveRate = rateMode === 'live' ? rateInfo.currentRate : rateInfo.maxRate;
-    const isFree = rateMode === 'live' ? rateInfo.isCurrentlyFree : effectiveRate === 0;
+    const maxRate = (rateInfo && typeof rateInfo.maxRate === 'number') ? rateInfo.maxRate : 0;
+    const currentRate = (rateInfo && typeof rateInfo.currentRate === 'number') ? rateInfo.currentRate : 0;
+    const isLiveFree = rateInfo ? (rateInfo.isCurrentlyFree || currentRate === 0) : true;
+    const isPeakFree = maxRate === 0;
 
     if (priceFilter === 'free') {
-      if (!isFree && effectiveRate > 0) return false;
+      if (rateMode === 'live') {
+        if (!isLiveFree) return false;
+      } else {
+        if (!isPeakFree) return false;
+      }
     } else if (priceFilter !== 'ALL') {
       const maxAllowed = parseFloat(priceFilter);
-      if (effectiveRate > maxAllowed) return false;
+      if (maxRate > maxAllowed) return false;
     }
 
     return true;
@@ -1811,8 +1829,8 @@ function applyFilterAndRender() {
   // 3. Sort zones by user selection
   if (activeLoc) {
     state.filteredZones.sort((a, b) => {
-      const rateA = rateMode === 'live' ? a.rateInfo.currentRate : a.rateInfo.maxRate;
-      const rateB = rateMode === 'live' ? b.rateInfo.currentRate : b.rateInfo.maxRate;
+      const rateA = a.rateInfo ? (rateMode === 'live' ? a.rateInfo.currentRate : a.rateInfo.maxRate) : 0;
+      const rateB = b.rateInfo ? (rateMode === 'live' ? b.rateInfo.currentRate : b.rateInfo.maxRate) : 0;
       const distA = a.distanceToTarget !== null ? a.distanceToTarget : Infinity;
       const distB = b.distanceToTarget !== null ? b.distanceToTarget : Infinity;
 
@@ -2947,14 +2965,14 @@ function setupEventListeners() {
 
 function resetAllFilters() {
   state.priceFilter = 'ALL';
-  state.rateMode = 'live';
+  state.rateMode = 'max';
   state.maxRadius = 500;
   state.sortMode = 'closest_cheapest';
   state.currentFilterBRZ = 'ALL';
   state.searchQuery = '';
 
   if (elements.priceFilter) elements.priceFilter.value = 'ALL';
-  if (elements.rateModeSelect) elements.rateModeSelect.value = 'live';
+  if (elements.rateModeSelect) elements.rateModeSelect.value = 'max';
   if (elements.radiusSelect) elements.radiusSelect.value = '500';
   if (elements.sortSelect) elements.sortSelect.value = 'closest_cheapest';
   if (elements.brzFilter) elements.brzFilter.value = 'ALL';
