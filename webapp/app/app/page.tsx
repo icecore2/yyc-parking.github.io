@@ -184,10 +184,13 @@ export default function MapAppPage() {
   };
 
   const handleRefresh = async () => {
+    if (isRefreshing) return;
     setIsRefreshing(true);
     try {
-      sessionStorage.removeItem('yyc_parking_zones_v2');
-      const freshData = await fetchCalgaryParkingZones();
+      const [freshData] = await Promise.all([
+        fetchCalgaryParkingZones(true),
+        new Promise((resolve) => setTimeout(resolve, 600)),
+      ]);
       setAllZones(freshData);
       setLastUpdated(getLastDataFetchTime());
     } catch (err) {
@@ -467,6 +470,7 @@ export default function MapAppPage() {
           onCloseBestValuePanel={() => setShowBestValuePanel(false)}
           bestValueZones={filteredZones}
           onSelectZone={(z) => setSelectedZone(z)}
+          isRefreshing={isRefreshing}
         />
 
         {/* Authentic 4-Tab Slide-Out Details Sheet */}

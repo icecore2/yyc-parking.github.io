@@ -129,11 +129,11 @@
       <!-- Refresh Button (shadcn Button default) -->
       <button 
         id="refresh-btn" 
-        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 px-3.5"
+        class="group inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring bg-primary text-primary-foreground shadow hover:bg-primary/90 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-65 disabled:cursor-not-allowed h-9 px-3.5"
         title="Fetch latest information from Calgary Parking Authority"
       >
         <i id="refresh-icon" data-lucide="refresh-cw" class="h-4 w-4"></i>
-        <span class="hidden sm:inline">Get Latest Info</span>
+        <span id="refresh-btn-text" class="hidden sm:inline">Get Latest Info</span>
       </button>
 
       <!-- Dark / Light Mode Toggle (shadcn Button outline icon) -->
@@ -494,7 +494,7 @@
         <button id="settings-reset-btn" class="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground">
           Reset Default
         </button>
-        <button id="settings-save-btn" class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90">
+        <button id="settings-save-btn" class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-65 disabled:cursor-not-allowed">
           Save &amp; Reload
         </button>
       </div>

@@ -377,6 +377,7 @@ fun SettingsSheetView(
                         onDismiss()
                         viewModel.loadData(context)
                     },
+                    enabled = !viewModel.isLoading,
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.weight(1f)
                 ) {

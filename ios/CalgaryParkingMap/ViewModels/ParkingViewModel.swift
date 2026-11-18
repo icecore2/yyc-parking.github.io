@@ -67,15 +67,16 @@ public final class ParkingViewModel {
     }
 
     public func loadData() async {
+        guard !isLoading else { return }
         isLoading = true
         statusMessage = "Syncing Calgary parking data..."
+        defer { isLoading = false }
 
         let apiUrl = UserDefaults.standard.string(forKey: "cpa_api_url") ?? ParkingDataService.defaultArcGISUrl
         let loaded = await ParkingDataService.shared.fetchAll(arcGisUrl: apiUrl)
 
         self.allZones = loaded
         self.lastSyncDate = Date()
-        self.isLoading = false
         self.statusMessage = "\(loaded.count) locations loaded"
 
         // Update provider counts

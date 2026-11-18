@@ -90,43 +90,47 @@ class ParkingViewModel : ViewModel() {
     }
 
     fun loadData(context: Context? = null) {
+        if (isLoading) return
+        isLoading = true
+        statusMessage = "Syncing Calgary parking data..."
+
         viewModelScope.launch {
-            isLoading = true
-            statusMessage = "Syncing Calgary parking data..."
+            try {
+                val apiUrl = LocationService.getSavedApiUrl()
+                val loaded = ParkingDataService.fetchAll(arcGisUrl = apiUrl, context = context)
 
-            val apiUrl = LocationService.getSavedApiUrl()
-            val loaded = ParkingDataService.fetchAll(arcGisUrl = apiUrl, context = context)
+                allZones = loaded
+                lastSyncDate = Date()
+                statusMessage = "${loaded.size} locations loaded"
 
-            allZones = loaded
-            lastSyncDate = Date()
-            isLoading = false
-            statusMessage = "${loaded.size} locations loaded"
+                // Update provider counts
+                val counts = mutableMapOf<ProviderId, Int>()
+                for (p in ProviderId.entries) counts[p] = 0
+                for (z in loaded) {
+                    counts[z.providerId] = (counts[z.providerId] ?: 0) + 1
+                }
+                providerCounts = counts
 
-            // Update provider counts
-            val counts = mutableMapOf<ProviderId, Int>()
-            for (p in ProviderId.entries) counts[p] = 0
-            for (z in loaded) {
-                counts[z.providerId] = (counts[z.providerId] ?: 0) + 1
+                // Extract BRZs
+                val brzs = loaded
+                    .map { it.brzName }
+                    .filter { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
+                    .distinct()
+                    .sorted()
+                allBRZs = listOf("ALL") + brzs
+
+                // Auto snapshot peak rate for history
+                val firstOnStreet = loaded.firstOrNull {
+                    it.providerId == ProviderId.PARKPLUS_ON_STREET && it.rateInfo.maxRate > 0.0
+                }
+                if (firstOnStreet != null) {
+                    HistoryManager.recordPriceSnapshot(peakRate = firstOnStreet.rateInfo.maxRate)
+                }
+
+                applyFilters()
+            } finally {
+                isLoading = false
             }
-            providerCounts = counts
-
-            // Extract BRZs
-            val brzs = loaded
-                .map { it.brzName }
-                .filter { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
-                .distinct()
-                .sorted()
-            allBRZs = listOf("ALL") + brzs
-
-            // Auto snapshot peak rate for history
-            val firstOnStreet = loaded.firstOrNull {
-                it.providerId == ProviderId.PARKPLUS_ON_STREET && it.rateInfo.maxRate > 0.0
-            }
-            if (firstOnStreet != null) {
-                HistoryManager.recordPriceSnapshot(peakRate = firstOnStreet.rateInfo.maxRate)
-            }
-
-            applyFilters()
         }
     }
 

@@ -155,6 +155,7 @@ public struct SettingsSheetView: View {
                         Task { await viewModel.loadData() }
                     }
                     .fontWeight(.semibold)
+                    .disabled(viewModel.isLoading)
 
                     Button("Reset to Default URL") {
                         apiUrl = ParkingDataService.defaultArcGISUrl

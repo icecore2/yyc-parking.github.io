@@ -174,11 +174,20 @@ export default function OriginalHeader({
             size="sm"
             onClick={onRefresh}
             disabled={isRefreshing}
-            className="h-8 sm:h-9 px-2.5 sm:px-3 text-xs"
+            aria-busy={isRefreshing}
+            className={`group h-8 sm:h-9 px-2.5 sm:px-3 text-xs transition-all duration-200 disabled:pointer-events-none disabled:opacity-65 disabled:cursor-not-allowed ${
+              isRefreshing ? 'ring-2 ring-primary/40 animate-pulse' : ''
+            }`}
             title="Fetch latest information from Calgary Parking Authority"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Get Latest Info</span>
+            <RefreshCw
+              className={`h-3.5 w-3.5 transition-transform duration-500 ${
+                isRefreshing ? 'animate-spin' : 'group-hover:rotate-180'
+              }`}
+            />
+            <span className="hidden sm:inline">
+              {isRefreshing ? 'Refreshing...' : 'Get Latest Info'}
+            </span>
           </Button>
 
           {/* Dark / Light Mode Toggle */}

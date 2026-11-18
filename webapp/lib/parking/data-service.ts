@@ -307,18 +307,32 @@ export function getLastDataFetchTime(): number {
   return Date.now();
 }
 
-export async function fetchCalgaryParkingZones(): Promise<ParkingZone[]> {
-  // Check fast cache first
-  const cached = getCachedZones();
-  if (cached && cached.length > 0) {
-    return cached;
+export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<ParkingZone[]> {
+  if (forceRefresh) {
+    inMemoryCache = null;
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.removeItem(CACHE_KEY);
+      } catch {
+        // Ignore sessionStorage exceptions
+      }
+    }
+  } else {
+    // Check fast cache first
+    const cached = getCachedZones();
+    if (cached && cached.length > 0) {
+      return cached;
+    }
   }
 
   // 1. Try fetching from remote database table ('parking_data' via /api/parking)
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000);
-    const res = await fetch('/api/parking', { signal: controller.signal });
+    const res = await fetch('/api/parking', {
+      signal: controller.signal,
+      cache: forceRefresh ? 'no-store' : 'default',
+    });
     clearTimeout(timeoutId);
 
     if (res.ok) {
@@ -347,6 +361,7 @@ export async function fetchCalgaryParkingZones(): Promise<ParkingZone[]> {
     const features: ArcGISFeature[] = data.features || [];
 
     if (features.length === 0) {
+      setCachedZones(SAMPLE_CALGARY_ZONES);
       return SAMPLE_CALGARY_ZONES;
     }
 
@@ -424,6 +439,7 @@ export async function fetchCalgaryParkingZones(): Promise<ParkingZone[]> {
     return fullDataset;
   } catch (err) {
     console.warn('Live Calgary ArcGIS fetch failed or timed out; using robust sample dataset.', err);
+    setCachedZones(SAMPLE_CALGARY_ZONES);
     return SAMPLE_CALGARY_ZONES;
   }
 }

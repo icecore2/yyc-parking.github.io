@@ -171,10 +171,19 @@ export default function SettingsDialog({
                 size="sm"
                 onClick={onRefresh}
                 disabled={isRefreshing}
-                className="gap-1.5"
+                aria-busy={isRefreshing}
+                className={`group gap-1.5 transition-all duration-200 disabled:pointer-events-none disabled:opacity-65 disabled:cursor-not-allowed ${
+                  isRefreshing
+                    ? 'border-primary/50 bg-primary/10 text-primary ring-2 ring-primary/20 animate-pulse'
+                    : ''
+                }`}
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span>Check Status</span>
+                <RefreshCw
+                  className={`w-3.5 h-3.5 transition-transform duration-500 ${
+                    isRefreshing ? 'animate-spin text-primary' : 'group-hover:rotate-180'
+                  }`}
+                />
+                <span>{isRefreshing ? 'Refreshing...' : 'Check Status'}</span>
               </Button>
             )}
             <Button

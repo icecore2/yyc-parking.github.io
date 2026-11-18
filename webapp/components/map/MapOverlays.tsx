@@ -32,6 +32,7 @@ interface MapOverlaysProps {
   onCloseBestValuePanel: () => void;
   bestValueZones: ParkingZone[];
   onSelectZone: (zone: ParkingZone) => void;
+  isRefreshing?: boolean;
 }
 
 export default function MapOverlays({
@@ -52,6 +53,7 @@ export default function MapOverlays({
   onCloseBestValuePanel,
   bestValueZones,
   onSelectZone,
+  isRefreshing = false,
 }: MapOverlaysProps) {
   return (
     <>
@@ -79,11 +81,21 @@ export default function MapOverlays({
       <div className="absolute top-3 left-4 z-20 flex flex-col sm:flex-row gap-2 pointer-events-none">
         <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border bg-background/90 px-3 py-1 text-xs font-medium text-foreground shadow-sm backdrop-blur">
           <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            <span
+              className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                isRefreshing ? 'bg-amber-400' : 'bg-emerald-400'
+              }`}
+            />
+            <span
+              className={`relative inline-flex rounded-full h-2 w-2 ${
+                isRefreshing ? 'bg-amber-500' : 'bg-emerald-500'
+              }`}
+            />
           </span>
           <span className="truncate max-w-[220px]">
-            Showing {filteredZonesCount} parking zones
+            {isRefreshing
+              ? 'Refreshing parking data...'
+              : `Showing ${filteredZonesCount} parking zones`}
           </span>
         </div>
 

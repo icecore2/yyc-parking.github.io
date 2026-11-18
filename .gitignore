@@ -13,4 +13,5 @@ ios/.build/
 ios/.swiftpm/
 services/parking-sync/data/
 *.db
+.firebase/
 

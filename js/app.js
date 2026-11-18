@@ -1680,6 +1680,28 @@ function parseOnStreetFeatures(features) {
 }
 
 /**
+ * Update refresh buttons visual effect & disabled state
+ */
+function setRefreshButtonState(isRefreshing) {
+  if (elements.refreshBtn) {
+    elements.refreshBtn.disabled = isRefreshing;
+    elements.refreshBtn.setAttribute('aria-busy', String(isRefreshing));
+    elements.refreshBtn.classList.toggle('is-refreshing', isRefreshing);
+  }
+  if (elements.settingsSaveBtn) {
+    elements.settingsSaveBtn.disabled = isRefreshing;
+  }
+  const liveIcon = elements.refreshBtn?.querySelector('#refresh-icon, svg, i');
+  if (liveIcon) {
+    liveIcon.classList.toggle('spin', isRefreshing);
+  }
+  const btnText = document.getElementById('refresh-btn-text');
+  if (btnText) {
+    btnText.textContent = isRefreshing ? 'Refreshing...' : 'Get Latest Info';
+  }
+}
+
+/**
  * Fetch latest data from all parking providers in parallel
  */
 async function fetchParkingData() {
@@ -1687,15 +1709,15 @@ async function fetchParkingData() {
   
   state.isLoading = true;
   updateStatus('loading', 'Fetching multi-provider parking data...');
-  if (elements.refreshIcon) elements.refreshIcon.classList.add('spin');
-  if (elements.refreshBtn) elements.refreshBtn.disabled = true;
+  setRefreshButtonState(true);
 
   try {
     const results = await Promise.allSettled([
       fetchOnStreetZones(),
       fetchOffStreetParkades(),
       Promise.resolve(fetchTransitParkAndRide()),
-      fetchCommercialLots()
+      fetchCommercialLots(),
+      new Promise((resolve) => setTimeout(resolve, 600))
     ]);
 
     const onStreetZones = results[0].status === 'fulfilled' ? results[0].value : [];
@@ -1738,8 +1760,7 @@ async function fetchParkingData() {
     updateStatus('error', `Error: ${err.message}`);
   } finally {
     state.isLoading = false;
-    if (elements.refreshIcon) elements.refreshIcon.classList.remove('spin');
-    if (elements.refreshBtn) elements.refreshBtn.disabled = false;
+    setRefreshButtonState(false);
   }
 }
 
@@ -2677,6 +2698,10 @@ function updateCountDisplay() {
 function refreshIcons() {
   if (window.lucide && typeof window.lucide.createIcons === 'function') {
     window.lucide.createIcons();
+    if (state.isLoading) {
+      const liveIcon = elements.refreshBtn?.querySelector('#refresh-icon, svg, i');
+      if (liveIcon) liveIcon.classList.add('spin');
+    }
   }
 }
 
