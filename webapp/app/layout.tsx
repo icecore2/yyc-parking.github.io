@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AuthProvider } from '@/lib/firebase/auth-context';
+import { WalkthroughProvider } from '@/components/onboarding/WalkthroughProvider';
 
 export const metadata: Metadata = {
   title: 'Calgary Parking Map — On-Street Parking Zones, Live Rates & Anti-Tow Alerts',
@@ -25,7 +26,9 @@ export default function RootLayout({
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <AuthProvider>
-          {children}
+          <WalkthroughProvider>
+            {children}
+          </WalkthroughProvider>
         </AuthProvider>
       </body>
     </html>

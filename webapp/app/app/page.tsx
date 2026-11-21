@@ -11,6 +11,16 @@ import LocationsDialog from '@/components/map/LocationsDialog';
 import SettingsDialog from '@/components/map/SettingsDialog';
 import ParkingAlarmDialog from '@/components/map/ParkingAlarmDialog';
 import ProGateModal from '@/components/auth/ProGateModal';
+import { useAuth } from '@/lib/firebase/auth-context';
+import { useWalkthrough } from '@/components/onboarding/WalkthroughProvider';
+import {
+  deleteUserLocation,
+  dismissExamplesForUser,
+  restoreExamplesForUser,
+  saveOrReplaceLocation,
+  saveUserLocation,
+} from '@/lib/firebase/firestore';
+import { EXAMPLE_IDS_BY_SECTION } from '@/lib/parking/example-data';
 import {
   ParkingZone,
   ProviderId,
@@ -51,30 +61,6 @@ function calculateHaversineMeters(
   return R * c;
 }
 
-const DEFAULT_CUSTOM_LOCATIONS: CustomLocation[] = [
-  {
-    id: 'loc_core',
-    name: 'The CORE Shopping Centre',
-    address: '510 8 Ave SW, Calgary',
-    coordinates: [-114.0688, 51.0458],
-    createdAt: 1700000000000,
-  },
-  {
-    id: 'loc_tower',
-    name: 'Calgary Tower / Stephen Ave',
-    address: '101 9 Ave SW, Calgary',
-    coordinates: [-114.0631, 51.0443],
-    createdAt: 1700000000001,
-  },
-  {
-    id: 'loc_saddledome',
-    name: 'Scotiabank Saddledome',
-    address: '555 Saddledome Rise SE, Calgary',
-    coordinates: [-114.0519, 51.0374],
-    createdAt: 1700000000002,
-  },
-];
-
 function getInitialZones(): ParkingZone[] {
   if (typeof window !== 'undefined') {
     try {
@@ -93,6 +79,14 @@ function getInitialZones(): ParkingZone[] {
 }
 
 export default function MapAppPage() {
+  const { user, profile, isAdmin } = useAuth();
+  const {
+    locations: customLocations,
+    isOpen: isWalkthroughOpen,
+    isMinimized: isWalkthroughMinimized,
+    refreshData,
+  } = useWalkthrough();
+  const uid = user?.uid || profile?.uid || 'demo_user';
   const [allZones, setAllZones] = useState<ParkingZone[]>(getInitialZones);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number>(() => {
@@ -121,17 +115,6 @@ export default function MapAppPage() {
   const [showCluster, setShowCluster] = useState(true);
 
   // Proximity & Custom Locations
-  const [customLocations, setCustomLocations] = useState<CustomLocation[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const raw = localStorage.getItem('cpa_custom_locations');
-        if (raw) return JSON.parse(raw);
-      } catch {
-        // Ignore
-      }
-    }
-    return DEFAULT_CUSTOM_LOCATIONS;
-  });
   const [activeLocationId, setActiveLocationId] = useState<string>('NONE');
   const [maxRadius, setMaxRadius] = useState<number | 'ALL'>(500);
   const [sortMode, setSortMode] = useState<'closest_cheapest' | 'cheapest' | 'closest'>('closest_cheapest');
@@ -253,30 +236,46 @@ export default function MapAppPage() {
   };
 
   // Custom Locations Helpers
-  const handleAddLocation = (loc: CustomLocation) => {
-    setCustomLocations((prev) => {
-      const next = [...prev, loc];
-      try {
-        localStorage.setItem('cpa_custom_locations', JSON.stringify(next));
-      } catch {
-        // Ignore
-      }
-      return next;
-    });
+  const handleAddLocation = async (loc: CustomLocation) => {
+    await saveUserLocation(uid, loc);
+    await refreshData();
     setActiveLocationId(loc.id);
   };
 
-  const handleDeleteLocation = (id: string) => {
-    setCustomLocations((prev) => {
-      const next = prev.filter((loc) => loc.id !== id);
-      try {
-        localStorage.setItem('cpa_custom_locations', JSON.stringify(next));
-      } catch {
-        // Ignore
-      }
-      return next;
-    });
-    if (activeLocationId === id) setActiveLocationId('NONE');
+  const handleUpdateLocation = async (
+    orig: CustomLocation,
+    updated: { name: string; address: string; coordinates: [number, number] }
+  ) => {
+    const saved = await saveOrReplaceLocation(uid, orig, updated);
+    await refreshData();
+    if (orig.isExample && activeLocationId === orig.id) {
+      setActiveLocationId(saved.id);
+    }
+  };
+
+  const handleDeleteLocation = async (loc: CustomLocation) => {
+    if (loc.isExample) {
+      await dismissExamplesForUser(uid, [loc.id]);
+    } else {
+      await deleteUserLocation(uid, loc.id);
+    }
+    await refreshData();
+    if (activeLocationId === loc.id) setActiveLocationId('NONE');
+  };
+
+  const handleClearExampleLocations = async () => {
+    const exampleIds = customLocations.filter((l) => l.isExample).map((l) => l.id);
+    await dismissExamplesForUser(
+      uid,
+      exampleIds.length > 0 ? exampleIds : [...EXAMPLE_IDS_BY_SECTION.locations]
+    );
+    await refreshData();
+    setActiveLocationId((prev) => (exampleIds.includes(prev) ? 'NONE' : prev));
+  };
+
+  const handleRestoreExampleLocations = async () => {
+    await restoreExamplesForUser(uid, [...EXAMPLE_IDS_BY_SECTION.locations]);
+    await refreshData();
   };
 
   // Map Point Clicked in Picker Mode
@@ -290,7 +289,7 @@ export default function MapAppPage() {
       coordinates: coords,
       createdAt: Date.now(),
     };
-    handleAddLocation(newLoc);
+    void handleAddLocation(newLoc);
   };
 
   // Filtered & Sorted Parking Zones
@@ -400,7 +399,9 @@ export default function MapAppPage() {
         onBrzChange={setSelectedBrz}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
-        onOpenSettings={() => setShowSettingsDialog(true)}
+        onOpenSettings={() => {
+          if (isAdmin) setShowSettingsDialog(true);
+        }}
         theme={theme}
         onToggleTheme={handleToggleTheme}
       />
@@ -449,6 +450,13 @@ export default function MapAppPage() {
           maxRadius={maxRadius}
           isPickingLocation={isPickingLocation}
           onPickMapPoint={handlePickMapPoint}
+          hasOpenModal={
+            showLocationsDialog ||
+            showSettingsDialog ||
+            Boolean(alarmZone) ||
+            Boolean(proGateInfo) ||
+            (isWalkthroughOpen && !isWalkthroughMinimized)
+          }
         />
 
         {/* Map Overlays (Status, Zone Count, Legend, Best Value, Controls) */}
@@ -476,6 +484,7 @@ export default function MapAppPage() {
         {/* Authentic 4-Tab Slide-Out Details Sheet */}
         {selectedZone && (
           <ZoneDetailSheet
+            key={selectedZone.id}
             zone={selectedZone}
             onClose={() => setSelectedZone(null)}
             onTriggerProGate={(name, desc) => setProGateInfo({ name, desc })}
@@ -490,14 +499,17 @@ export default function MapAppPage() {
           onClose={() => setShowLocationsDialog(false)}
           locations={customLocations}
           onAddLocation={handleAddLocation}
+          onUpdateLocation={handleUpdateLocation}
           onDeleteLocation={handleDeleteLocation}
+          onClearExamples={handleClearExampleLocations}
+          onRestoreExamples={handleRestoreExampleLocations}
           onSelectLocation={setActiveLocationId}
           onStartMapPick={() => setIsPickingLocation(true)}
         />
 
         {/* API Status & Data Feeds Modal */}
         <SettingsDialog
-          isOpen={showSettingsDialog}
+          isOpen={isAdmin && showSettingsDialog}
           onClose={() => setShowSettingsDialog(false)}
           lastUpdatedTimestamp={lastUpdated}
           onRefresh={handleRefresh}

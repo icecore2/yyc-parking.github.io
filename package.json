@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node test/test_rates_parser.js && node test/test_providers.js",
+    "build": "npm --prefix webapp run build",
+    "test": "node test/test_rates_parser.js && node test/test_providers.js && node test/test_ui_layering.js",
     "sync:run": "npm --prefix services/parking-sync run sync",
     "sync:test": "npm --prefix services/parking-sync run test",
     "sync:daemon": "npm --prefix services/parking-sync run sync:daemon",

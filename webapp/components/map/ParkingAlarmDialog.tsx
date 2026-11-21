@@ -21,7 +21,7 @@ interface ParkingAlarmDialogProps {
 }
 
 export default function ParkingAlarmDialog({ zone, onClose }: ParkingAlarmDialogProps) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [durationMinutes, setDurationMinutes] = useState<number>(60);
   const [leadMinutes, setLeadMinutes] = useState<number>(15);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
@@ -32,7 +32,7 @@ export default function ParkingAlarmDialog({ zone, onClose }: ParkingAlarmDialog
     const durationHours = durationMinutes / 60;
     const totalCost = Number((durationHours * zone.activeRate).toFixed(2));
 
-    const uid = user ? user.uid : 'demo_user';
+    const uid = user?.uid || profile?.uid || 'demo_user';
 
     await saveParkingSession(uid, {
       id: `session_${now}`,
@@ -130,7 +130,7 @@ export default function ParkingAlarmDialog({ zone, onClose }: ParkingAlarmDialog
                     variant={leadMinutes === l.m ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setLeadMinutes(l.m)}
-                    className="h-9"
+                    className="h-8 text-xs rounded-md"
                   >
                     {l.label}
                   </Button>
@@ -151,7 +151,8 @@ export default function ParkingAlarmDialog({ zone, onClose }: ParkingAlarmDialog
             <Button
               onClick={handleStartAlarm}
               variant="emerald"
-              className="w-full mt-2"
+              size="default"
+              className="w-full h-8.5 sm:h-9 text-xs sm:text-sm font-semibold rounded-lg mt-2"
             >
               <BellRing className="w-4 h-4" />
               Activate Alarm

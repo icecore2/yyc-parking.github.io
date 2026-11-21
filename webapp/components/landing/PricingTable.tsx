@@ -105,7 +105,7 @@ export default function PricingTable() {
             </CardContent>
 
             <CardFooter className="p-8 pt-6">
-              <Button asChild variant="outline" className="w-full h-11 text-xs font-semibold gap-2">
+              <Button asChild variant="outline" className="w-full h-9.5 text-xs sm:text-sm font-semibold rounded-lg gap-2">
                 <Link href="/app">
                   <span>Launch Free Map</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -180,7 +180,7 @@ export default function PricingTable() {
                 type="button"
                 variant="emerald"
                 onClick={() => handleStripeCheckout(billingPeriod)}
-                className="w-full h-11 text-xs font-bold gap-2"
+                className="w-full h-9.5 text-xs sm:text-sm font-semibold rounded-lg gap-2"
               >
                 <Crown className="w-4 h-4" />
                 <span>{isPro ? 'You are Subscribed to PRO' : 'Upgrade to Pro with Stripe'}</span>

@@ -95,7 +95,7 @@ export default function AuthModal({ onClose, defaultMode = 'signin' }: AuthModal
           variant="outline"
           onClick={handleGoogleSignIn}
           disabled={loading}
-          className="w-full gap-3 h-10"
+          className="w-full gap-2.5 h-8.5 sm:h-9 text-xs sm:text-sm font-medium rounded-lg"
         >
           <svg className="w-4 h-4" viewBox="0 0 24 24">
             <path
@@ -183,7 +183,7 @@ export default function AuthModal({ onClose, defaultMode = 'signin' }: AuthModal
             type="submit"
             disabled={loading}
             variant="emerald"
-            className="w-full mt-2"
+            className="w-full h-8.5 sm:h-9 text-xs sm:text-sm font-semibold rounded-lg mt-2"
           >
             {loading ? 'Please wait...' : isSignUp ? 'Create Free Account' : 'Sign In'}
             <ArrowRight className="w-3.5 h-3.5" />

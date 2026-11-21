@@ -81,6 +81,8 @@ export interface CustomLocation {
   address: string;
   coordinates: [number, number]; // [lng, lat]
   createdAt: number;
+  updatedAt?: number;
+  isExample?: boolean;
 }
 
 export interface ProximityResult {
@@ -101,6 +103,8 @@ export interface UserFavoriteSpot {
   provider: ProviderId;
   notes?: string;
   createdAt: number;
+  updatedAt?: number;
+  isExample?: boolean;
 }
 
 export interface ParkingSession {
@@ -115,4 +119,35 @@ export interface ParkingSession {
   alertLeadMinutes: number; // e.g. 15 mins before expiry
   active: boolean;
   notes?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  isExample?: boolean;
+}
+
+export interface UserVehicle {
+  id: string;
+  plate: string;
+  description: string;
+  isPrimary: boolean;
+  createdAt: number;
+  updatedAt?: number;
+  isExample?: boolean;
+}
+
+export interface RateSnapshot {
+  id: string;
+  period: string;
+  rate: number;
+  createdAt?: number;
+  isExample?: boolean;
+}
+
+export type WalkthroughStepId = 'profile' | 'vehicles' | 'locations' | 'favorites' | 'expenses';
+
+export interface UserOnboardingState {
+  walkthroughCompleted: boolean;
+  walkthroughDismissed: boolean;
+  dismissedExampleIds: string[];
+  completedSteps: WalkthroughStepId[];
+  updatedAt?: number;
 }

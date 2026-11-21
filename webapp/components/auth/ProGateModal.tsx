@@ -74,7 +74,7 @@ export default function ProGateModal({ featureName, description, onClose }: ProG
 
         {/* Action Buttons */}
         <div className="space-y-2 pt-2">
-          <Button asChild variant="emerald" className="w-full h-11 text-xs font-bold shadow-md">
+          <Button asChild variant="emerald" className="w-full h-9 text-xs sm:text-sm font-semibold rounded-lg shadow-sm">
             <Link href="/pricing" onClick={onClose}>
               <span>View Pricing Plans (From $3.99/mo)</span>
               <ArrowRight className="w-4 h-4 ml-1.5" />

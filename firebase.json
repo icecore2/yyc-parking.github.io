@@ -1,4 +1,7 @@
 {
+  "firestore": {
+    "rules": "webapp/firestore.rules"
+  },
   "hosting": {
     "public": "webapp/out",
     "cleanUrls": true,

@@ -159,7 +159,7 @@
   <!-- ========================================================================
        Secondary Toolbar: Custom Locations, Closest + Cheapest & Price Filters
        ======================================================================== -->
-  <div id="filter-toolbar-row" class="z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/95 px-4 py-2 backdrop-blur gap-2 text-xs">
+  <div id="filter-toolbar-row" class="relative z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/95 px-4 py-2 backdrop-blur gap-2 text-xs">
     
     <!-- Left Section: Custom Location & Proximity Controls -->
     <div class="flex flex-wrap items-center gap-2">
@@ -259,7 +259,7 @@
   <!-- ========================================================================
        Provider Filter Bar: Toggle Free Municipal & Private Providers
        ======================================================================== -->
-  <div id="provider-toolbar-row" class="z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/90 px-4 py-1.5 backdrop-blur gap-2 text-xs">
+  <div id="provider-toolbar-row" class="relative z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/90 px-4 py-1.5 backdrop-blur gap-2 text-xs">
     <div class="flex items-center gap-1.5 text-muted-foreground font-semibold text-[11px] shrink-0">
       <i data-lucide="layers" class="h-3.5 w-3.5 text-primary"></i>
       <span>Providers:</span>
@@ -308,7 +308,7 @@
     </div>
 
     <!-- Leaflet Map Container -->
-    <div id="map" class="w-full h-full"></div>
+    <div id="map" class="relative isolate w-full h-full"></div>
 
     <!-- Status & Zones Count (Top-Left Badge Overlay) -->
     <div class="absolute top-4 left-14 z-20 flex flex-col sm:flex-row gap-2 pointer-events-none">
@@ -464,7 +464,7 @@
   <!-- ========================================================================
        API Configuration Dialog (shadcn Dialog Component)
        ======================================================================== -->
-  <div id="settings-dialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm dialog-overlay p-4">
+  <div id="settings-dialog" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm dialog-overlay p-4">
     <div class="dialog-content w-full max-w-lg rounded-xl border border-border bg-background p-6 shadow-xl flex flex-col gap-4">
       
       <!-- Dialog Header -->
@@ -505,7 +505,7 @@
   <!-- ========================================================================
        Custom Locations Dialog (shadcn Dialog Component)
        ======================================================================== -->
-  <div id="locations-dialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm dialog-overlay p-4">
+  <div id="locations-dialog" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm dialog-overlay p-4">
     <div class="dialog-content w-full max-w-2xl rounded-xl border border-border bg-background p-6 shadow-xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
       
       <!-- Dialog Header -->

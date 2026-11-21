@@ -35,7 +35,7 @@ export default function Hero() {
 
         {/* CTA Button Group */}
         <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-          <Button asChild variant="emerald" size="lg" className="w-full sm:w-auto h-12 px-7 text-sm font-bold shadow-lg shadow-emerald-600/25 gap-2">
+          <Button asChild variant="emerald" size="lg" className="w-full sm:w-auto font-bold shadow-md shadow-emerald-600/20 gap-2">
             <Link href="/app">
               <MapPin className="w-4 h-4" />
               <span>Launch Live Free Map</span>
@@ -43,7 +43,7 @@ export default function Hero() {
             </Link>
           </Button>
 
-          <Button asChild variant="outline" size="lg" className="w-full sm:w-auto h-12 px-7 text-sm font-semibold gap-2">
+          <Button asChild variant="outline" size="lg" className="w-full sm:w-auto font-semibold gap-2">
             <Link href="/pricing">
               <Sparkles className="w-4 h-4 text-amber-500" />
               <span>Explore Pro Features ($3.99/mo)</span>

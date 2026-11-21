@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ParkingZone } from '@/lib/parking/types';
+import { ParkingZone, RateSnapshot } from '@/lib/parking/types';
 import { PROVIDERS } from '@/lib/parking/providers';
 import { parseRateSchedule } from '@/lib/parking/rate-parser';
 import RateCurveChart from './RateCurveChart';
+import { ExampleBadge } from '@/components/onboarding/ExampleDataBanner';
 import {
   Navigation,
   Heart,
@@ -16,14 +17,23 @@ import {
   Footprints,
   Info,
   Camera,
+  Pencil,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/lib/firebase/auth-context';
-import { saveUserFavorite } from '@/lib/firebase/firestore';
+import {
+  createRateSnapshot,
+  getUserFavorites,
+  getZoneRateSnapshots,
+  saveUserFavorite,
+  saveZoneRateSnapshots,
+} from '@/lib/firebase/firestore';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 interface ZoneDetailSheetProps {
   zone: ParkingZone;
@@ -42,22 +52,36 @@ export default function ZoneDetailSheet({
   onOpenAlarm,
   onZoomToZone,
 }: ZoneDetailSheetProps) {
-  const { user, isPro } = useAuth();
+  const { user, profile, isPro } = useAuth();
+  const uid = user?.uid || profile?.uid || 'demo_user';
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [isSaved, setIsSaved] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
-  const [savedSnapshots, setSavedSnapshots] = useState<{ period: string; rate: number }[]>([
-    { period: '2024 Base Rate', rate: Math.max(1.5, zone.activeRate - 0.5) },
-    { period: 'Current Live Rate', rate: zone.activeRate },
-  ]);
+  const [savedSnapshots, setSavedSnapshots] = useState<RateSnapshot[]>(() =>
+    getZoneRateSnapshots(uid, zone.id, zone.activeRate)
+  );
+  const [editingSnapshotId, setEditingSnapshotId] = useState<string | null>(null);
+  const [editSnapPeriod, setEditSnapPeriod] = useState('');
+  const [editSnapRate, setEditSnapRate] = useState('');
 
   const provider = PROVIDERS[zone.provider] || PROVIDERS.parkplus_on_street;
   const { intervals } = parseRateSchedule(zone.enforceableHours);
 
   const googleMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${zone.coordinates[1]},${zone.coordinates[0]}`;
 
+  useEffect(() => {
+    let cancelled = false;
+    getUserFavorites(uid).then((favs) => {
+      if (cancelled) return;
+      setIsSaved(favs.some((f) => f.zoneId === zone.id || f.id === zone.id));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, zone.id]);
+
   const handleSaveFavorite = async () => {
-    if (!isPro && !user) {
+    if (!isPro && !user && !profile) {
       onTriggerProGate(
         'Cloud Saved Favorites',
         'Upgrade to Calgary Commuter Pro to sync your favorite parking zones across all your devices.'
@@ -67,7 +91,6 @@ export default function ZoneDetailSheet({
 
     try {
       setSaveLoading(true);
-      const uid = user ? user.uid : 'demo_user';
       await saveUserFavorite(uid, {
         id: zone.id,
         zoneId: zone.id,
@@ -105,7 +128,55 @@ export default function ZoneDetailSheet({
       hour: 'numeric',
       minute: '2-digit',
     });
-    setSavedSnapshots((prev) => [...prev, { period: timeStr, rate: zone.activeRate }]);
+    const nextSnapshot: RateSnapshot = {
+      id: `snap_${now.getTime()}`,
+      period: timeStr,
+      rate: zone.activeRate,
+      createdAt: now.getTime(),
+      isExample: false,
+    };
+    const next = [...savedSnapshots, nextSnapshot];
+    setSavedSnapshots(next);
+    saveZoneRateSnapshots(uid, zone.id, next);
+  };
+
+  const handleClearExampleSnapshots = () => {
+    const next = savedSnapshots.filter((s) => !s.isExample);
+    setSavedSnapshots(next);
+    saveZoneRateSnapshots(uid, zone.id, next, true);
+  };
+
+  const startEditSnapshot = (snap: RateSnapshot) => {
+    setEditingSnapshotId(snap.id);
+    setEditSnapPeriod(snap.period);
+    setEditSnapRate(snap.rate.toFixed(2));
+  };
+
+  const handleSaveSnapshotEdit = (orig: RateSnapshot) => {
+    const parsedRate = parseFloat(editSnapRate);
+    if (!editSnapPeriod.trim() || !Number.isFinite(parsedRate) || parsedRate < 0) return;
+
+    const updatedSnap: RateSnapshot = orig.isExample
+      ? createRateSnapshot(editSnapPeriod, parsedRate, orig.createdAt)
+      : {
+          ...orig,
+          period: editSnapPeriod.trim(),
+          rate: Number(parsedRate.toFixed(2)),
+          isExample: false,
+        };
+
+    const next = savedSnapshots.map((s) => (s.id === orig.id ? updatedSnap : s));
+    const hasRemainingExample = next.some((s) => s.isExample);
+    setSavedSnapshots(next);
+    saveZoneRateSnapshots(uid, zone.id, next, !hasRemainingExample);
+    setEditingSnapshotId(null);
+  };
+
+  const handleDeleteSnapshot = (snap: RateSnapshot) => {
+    const next = savedSnapshots.filter((s) => s.id !== snap.id);
+    const hasRemainingExample = next.some((s) => s.isExample);
+    setSavedSnapshots(next);
+    saveZoneRateSnapshots(uid, zone.id, next, !hasRemainingExample);
   };
 
   useEffect(() => {
@@ -120,7 +191,7 @@ export default function ZoneDetailSheet({
 
   return (
     <aside
-      className="absolute right-0 top-0 bottom-0 z-30 w-full sm:max-w-md md:max-w-lg p-0 flex flex-col gap-0 border-l border-border bg-card text-card-foreground shadow-2xl transition-all duration-300 ease-in-out"
+      className="absolute right-0 top-0 bottom-0 z-40 w-full sm:max-w-md md:max-w-lg p-0 flex flex-col gap-0 border-l border-border bg-card text-card-foreground shadow-2xl transition-all duration-300 ease-in-out"
       style={{ backgroundColor: 'var(--card)' }}
       role="region"
       aria-label="Parking Zone Details"
@@ -370,31 +441,121 @@ export default function ZoneDetailSheet({
             <TabsContent value="history" className="mt-0 flex flex-col gap-3">
               <Card>
                 <CardContent className="p-3.5 flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Rate Audit History
                     </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleTakeSnapshot}
-                      className="h-7 text-[11px] gap-1 text-primary"
-                    >
-                      <Camera className="w-3 h-3" />
-                      Take Snapshot
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      {savedSnapshots.some((s) => s.isExample) && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleClearExampleSnapshots}
+                          className="h-7 text-[11px] text-muted-foreground hover:text-destructive"
+                        >
+                          Clear Examples
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleTakeSnapshot}
+                        className="h-7 text-[11px] gap-1 text-primary"
+                      >
+                        <Camera className="w-3 h-3" />
+                        Take Snapshot
+                      </Button>
+                    </div>
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Track price fluctuations in this parking zone. Rates are updated periodically by Calgary Parking based on occupancy targets.
+                    Track price fluctuations in this parking zone. Edit or replace example baseline rows, or capture live rate snapshots.
                   </p>
                   <div className="space-y-1.5 divide-y divide-border text-xs mt-1">
-                    {savedSnapshots.map((item, idx) => (
-                      <div key={idx} className="pt-1.5 first:pt-0 flex items-center justify-between">
-                        <span className="text-muted-foreground">{item.period}</span>
-                        <span className="font-bold text-foreground">${item.rate.toFixed(2)}/hr</span>
+                    {savedSnapshots.length === 0 ? (
+                      <div className="py-3 text-center text-[11px] text-muted-foreground">
+                        No snapshots recorded. Click &quot;Take Snapshot&quot; above to log the current rate.
                       </div>
-                    ))}
+                    ) : (
+                      savedSnapshots.map((item) => (
+                        <div key={item.id} className="pt-2 first:pt-0">
+                          {editingSnapshotId === item.id ? (
+                            <div className="flex flex-col gap-1.5 py-1">
+                              <div className="flex gap-1.5">
+                                <Input
+                                  type="text"
+                                  value={editSnapPeriod}
+                                  onChange={(e) => setEditSnapPeriod(e.target.value)}
+                                  className="h-7 text-xs flex-1"
+                                  placeholder="Label (e.g. Nov Peak)"
+                                />
+                                <Input
+                                  type="number"
+                                  step="0.25"
+                                  min="0"
+                                  value={editSnapRate}
+                                  onChange={(e) => setEditSnapRate(e.target.value)}
+                                  className="h-7 text-xs w-20"
+                                />
+                              </div>
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setEditingSnapshotId(null)}
+                                  className="h-6 text-[11px]"
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="emerald"
+                                  size="sm"
+                                  onClick={() => handleSaveSnapshotEdit(item)}
+                                  className="h-6 text-[11px]"
+                                >
+                                  Save
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-muted-foreground truncate">{item.period}</span>
+                                {item.isExample && <ExampleBadge label="Example" />}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span className="font-bold text-foreground mr-1">
+                                  ${item.rate.toFixed(2)}/hr
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="iconSm"
+                                  onClick={() => startEditSnapshot(item)}
+                                  title="Edit snapshot"
+                                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="iconSm"
+                                  onClick={() => handleDeleteSnapshot(item)}
+                                  title="Delete snapshot"
+                                  className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -453,7 +614,7 @@ export default function ZoneDetailSheet({
                 type="button"
                 variant="outline"
                 onClick={handleAlarmClick}
-                className="w-full justify-between h-auto py-3 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-semibold"
+                className="w-full justify-between h-auto py-2 px-3 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-semibold rounded-lg"
               >
                 <div className="flex items-center gap-2">
                   <BellRing className="w-4 h-4 text-amber-500" />
@@ -471,13 +632,13 @@ export default function ZoneDetailSheet({
 
         {/* Footer Actions */}
         <div
-          className="border-t border-border p-4 bg-card flex flex-col gap-2 shrink-0"
+          className="border-t border-border p-3.5 bg-card flex flex-col gap-2 shrink-0"
           style={{ backgroundColor: 'var(--card)' }}
         >
           {zone.paymentUrl && (
-            <Button asChild variant="emerald" className="w-full">
+            <Button asChild variant="emerald" size="default" className="w-full h-8.5 sm:h-9 text-xs sm:text-sm font-semibold rounded-lg">
               <a href={zone.paymentUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4" />
+                <ExternalLink className="h-3.5 w-3.5" />
                 <span>Pay on {provider.paymentApp || 'Provider Website'}</span>
               </a>
             </Button>
@@ -488,15 +649,16 @@ export default function ZoneDetailSheet({
               type="button"
               onClick={() => onZoomToZone(zone)}
               variant="default"
-              className="w-full"
+              size="default"
+              className="w-full h-8.5 sm:h-9 text-xs sm:text-sm font-semibold rounded-lg"
             >
-              <Focus className="h-4 w-4" />
+              <Focus className="h-3.5 w-3.5" />
               <span>Zoom into Facility</span>
             </Button>
           )}
 
           <div className="grid grid-cols-2 gap-2">
-            <Button asChild variant="outline" size="sm" className="w-full">
+            <Button asChild variant="outline" size="sm" className="w-full h-8 text-xs rounded-md">
               <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer">
                 <Navigation className="h-3.5 w-3.5 text-primary" />
                 <span>Google Maps</span>
@@ -509,7 +671,7 @@ export default function ZoneDetailSheet({
               size="sm"
               onClick={handleSaveFavorite}
               disabled={saveLoading || isSaved}
-              className={`w-full ${isSaved ? 'text-rose-600 font-semibold' : ''}`}
+              className={`w-full h-8 text-xs rounded-md ${isSaved ? 'text-rose-600 font-semibold' : ''}`}
             >
               {isSaved ? (
                 <>

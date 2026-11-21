@@ -11,9 +11,12 @@ rules_version = '2';
 //      - email: string | null (required key, immutable by client) - User's email address.
 //      - displayName: string | null (optional, mutable) - User's display name (max 100 chars).
 //      - photoURL: string | null (optional, mutable) - Profile avatar URL (max 2048 chars).
-//      - tier: string (required, immutable by client) - Subscription tier ('free' or 'pro').
-//              Must default to 'free' upon creation. Escalation to 'pro' is reserved
+//      - tier: string (required, immutable by client) - Subscription tier ('free', 'pro', or 'admin').
+//              Must default to 'free' upon creation. Escalation to 'pro' or 'admin' is reserved
 //              exclusively for server-side Firebase Admin / Stripe webhooks.
+//      - role: string (optional, immutable by client) - User role ('user' or 'admin').
+//              Defaults to 'user' if provided on creation; escalation to 'admin' is reserved
+//              exclusively for server-side Firebase Admin SDK.
 //      - createdAt: number | timestamp (required, immutable) - Creation time in ms or timestamp.
 //
 // 2. Collection: users/{uid}/favorites/{favoriteId}
@@ -29,6 +32,7 @@ rules_version = '2';
 //      - provider: string (optional) - Operator / provider identifier (max 50 chars).
 //      - notes: string (optional) - Personal parking notes (max 1000 chars).
 //      - createdAt: number | timestamp (optional, immutable) - Timestamp.
+//      - updatedAt: number | timestamp (optional) - Last update timestamp.
 //
 // 3. Collection: users/{uid}/sessions/{sessionId}
 //    - Document ID: Unique parking session identifier.
@@ -36,7 +40,7 @@ rules_version = '2';
 //      - id: string (optional, immutable) - Session ID matching sessionId (max 100 chars).
 //      - zoneId: string (required) - Parking zone identifier (1 to 100 chars).
 //      - address: string (optional) - Parking address / location (max 250 chars).
-//      - startTime: number | timestamp (required, immutable) - Session start time (> 0).
+//      - startTime: number | timestamp (required) - Session start time (> 0).
 //      - durationHours: number (required) - Duration in hours (0 < duration <= 720).
 //      - hourlyRate: number (optional) - Rate per hour in dollars (>= 0, <= 1000).
 //      - totalCostDollars: number (required) - Total cost in dollars (>= 0, <= 10000).
@@ -45,8 +49,39 @@ rules_version = '2';
 //      - active: bool (optional) - Active session flag.
 //      - notes: string (optional) - Session notes (max 1000 chars).
 //      - createdAt: number | timestamp (optional, immutable) - Creation timestamp.
+//      - updatedAt: number | timestamp (optional) - Last update timestamp.
 //
-// 4. Collection: parking_data/{documentId}
+// 4. Collection: users/{uid}/vehicles/{vehicleId}
+//    - Document ID: Unique vehicle identifier.
+//    - Fields:
+//      - id: string (optional, immutable) - Vehicle ID matching vehicleId (max 100 chars).
+//      - plate: string (required) - Vehicle license plate (1 to 20 chars).
+//      - description: string (required) - Vehicle description (1 to 120 chars).
+//      - isPrimary: bool (required) - Primary vehicle indicator.
+//      - createdAt: number | timestamp (required, immutable) - Creation timestamp.
+//      - updatedAt: number | timestamp (optional) - Last update timestamp.
+//
+// 5. Collection: users/{uid}/locations/{locationId}
+//    - Document ID: Unique custom location identifier.
+//    - Fields:
+//      - id: string (optional, immutable) - Location ID matching locationId (max 100 chars).
+//      - name: string (required) - Custom location name (1 to 120 chars).
+//      - address: string (required) - Physical address or coordinate text (1 to 250 chars).
+//      - coordinates: list | map (required) - Geographic coordinates:
+//                     [longitude, latitude] list of 2 numbers OR map with lat/lng or latitude/longitude.
+//      - createdAt: number | timestamp (required, immutable) - Creation timestamp.
+//      - updatedAt: number | timestamp (optional) - Last update timestamp.
+//
+// 6. Collection: users/{uid}/preferences/{prefId}
+//    - Document ID: Scoped strictly to 'onboarding'.
+//    - Fields:
+//      - walkthroughCompleted: bool (required) - Whether onboarding walkthrough is completed.
+//      - walkthroughDismissed: bool (required) - Whether onboarding walkthrough is dismissed.
+//      - dismissedExampleIds: list (required) - Dismissed example IDs (max 50 items).
+//      - completedSteps: list (required) - Completed walkthrough step IDs (max 20 items).
+//      - updatedAt: number | timestamp (optional) - Last update timestamp.
+//
+// 7. Collection: parking_data/{documentId}
 //    - Document ID: Unique parking record identifier (e.g., 'parkplus_1008', 'parkade_lot54', 'impark_316').
 //    - Fields:
 //      - id: string - Global unique record identifier.
@@ -157,7 +192,7 @@ service cloud.firestore {
 
     // Validate User Profile document structure and constraints
     function isValidUserProfile(data, uid) {
-      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'tier', 'createdAt']) &&
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'tier', 'role', 'createdAt']) &&
         hasRequiredFields(['uid', 'email', 'tier', 'createdAt']) &&
         data.uid is string &&
         data.uid == uid &&
@@ -177,7 +212,8 @@ service cloud.firestore {
           data.photoURL == '' ||
           (data.photoURL is string && isValidUrl(data.photoURL))
         ) &&
-        data.tier in ['free', 'pro'] &&
+        data.tier in ['free', 'pro', 'admin'] &&
+        (!('role' in data) || data.role in ['user', 'admin']) &&
         isValidTimeField(data.createdAt);
     }
 
@@ -185,7 +221,7 @@ service cloud.firestore {
     function isValidFavorite(data, favoriteId) {
       return hasOnlyAllowedFields([
           'id', 'zoneId', 'label', 'address', 'hourlyRate',
-          'coordinates', 'provider', 'notes', 'createdAt'
+          'coordinates', 'provider', 'notes', 'createdAt', 'updatedAt'
         ]) &&
         hasRequiredFields(['zoneId', 'label', 'coordinates']) &&
         (
@@ -218,6 +254,10 @@ service cloud.firestore {
         (
           !('createdAt' in data) ||
           isValidTimeField(data.createdAt)
+        ) &&
+        (
+          !('updatedAt' in data) ||
+          isValidTimeField(data.updatedAt)
         );
     }
 
@@ -226,7 +266,7 @@ service cloud.firestore {
       return hasOnlyAllowedFields([
           'id', 'zoneId', 'address', 'startTime', 'durationHours',
           'hourlyRate', 'totalCostDollars', 'expiryTime', 'alertLeadMinutes',
-          'active', 'notes', 'createdAt'
+          'active', 'notes', 'createdAt', 'updatedAt'
         ]) &&
         hasRequiredFields(['zoneId', 'startTime', 'durationHours', 'totalCostDollars']) &&
         (
@@ -270,6 +310,80 @@ service cloud.firestore {
         (
           !('createdAt' in data) ||
           isValidTimeField(data.createdAt)
+        ) &&
+        (
+          !('updatedAt' in data) ||
+          isValidTimeField(data.updatedAt)
+        );
+    }
+
+    // Validate User Vehicle document structure and constraints
+    function isValidVehicle(data, vehicleId) {
+      return hasOnlyAllowedFields([
+          'id', 'plate', 'description', 'isPrimary', 'createdAt', 'updatedAt'
+        ]) &&
+        hasRequiredFields(['plate', 'description', 'isPrimary', 'createdAt']) &&
+        (
+          !('id' in data) ||
+          (data.id is string && data.id == vehicleId && data.id.size() <= 100)
+        ) &&
+        data.plate is string &&
+        data.plate.size() > 0 &&
+        data.plate.size() <= 20 &&
+        data.description is string &&
+        data.description.size() > 0 &&
+        data.description.size() <= 120 &&
+        data.isPrimary is bool &&
+        isValidTimeField(data.createdAt) &&
+        (
+          !('updatedAt' in data) ||
+          isValidTimeField(data.updatedAt)
+        );
+    }
+
+    // Validate Custom Location document structure and constraints
+    function isValidLocation(data, locationId) {
+      return hasOnlyAllowedFields([
+          'id', 'name', 'address', 'coordinates', 'createdAt', 'updatedAt'
+        ]) &&
+        hasRequiredFields(['name', 'address', 'coordinates', 'createdAt']) &&
+        (
+          !('id' in data) ||
+          (data.id is string && data.id == locationId && data.id.size() <= 100)
+        ) &&
+        data.name is string &&
+        data.name.size() > 0 &&
+        data.name.size() <= 120 &&
+        data.address is string &&
+        data.address.size() > 0 &&
+        data.address.size() <= 250 &&
+        isValidCoordinates(data.coordinates) &&
+        isValidTimeField(data.createdAt) &&
+        (
+          !('updatedAt' in data) ||
+          isValidTimeField(data.updatedAt)
+        );
+    }
+
+    // Validate Onboarding Preferences document structure and constraints
+    function isValidOnboardingPreferences(data) {
+      return hasOnlyAllowedFields([
+          'walkthroughCompleted', 'walkthroughDismissed',
+          'dismissedExampleIds', 'completedSteps', 'updatedAt'
+        ]) &&
+        hasRequiredFields([
+          'walkthroughCompleted', 'walkthroughDismissed',
+          'dismissedExampleIds', 'completedSteps'
+        ]) &&
+        data.walkthroughCompleted is bool &&
+        data.walkthroughDismissed is bool &&
+        data.dismissedExampleIds is list &&
+        data.dismissedExampleIds.size() <= 50 &&
+        data.completedSteps is list &&
+        data.completedSteps.size() <= 20 &&
+        (
+          !('updatedAt' in data) ||
+          isValidTimeField(data.updatedAt)
         );
     }
 
@@ -282,16 +396,18 @@ service cloud.firestore {
       // Each authenticated user can read only their own profile (PII protected)
       allow read: if isOwner(uid);
 
-      // Authenticated users can create their own profile defaulting to 'free' tier
+      // Authenticated users can create their own profile defaulting to 'free' tier and optional 'user' role
       allow create: if isOwner(uid) &&
                        isValidUserProfile(request.resource.data, uid) &&
-                       request.resource.data.tier == 'free';
+                       request.resource.data.tier == 'free' &&
+                       (!('role' in request.resource.data) || request.resource.data.role == 'user');
 
       // Authenticated users can update non-billing fields (displayName, photoURL)
-      // They CANNOT modify uid, email, createdAt, or self-escalate tier to 'pro'
+      // They CANNOT modify uid, email, createdAt, or self-escalate tier or role to 'pro'/'admin'
       allow update: if isOwner(uid) &&
                        isValidUserProfile(request.resource.data, uid) &&
                        request.resource.data.tier == resource.data.tier &&
+                       request.resource.data.get('role', null) == resource.data.get('role', null) &&
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL']);
 
       // Profile deletion disallowed from client
@@ -327,14 +443,69 @@ service cloud.firestore {
         // Owner can update parking sessions with validated schema and immutable identity
         allow update: if isOwner(uid) &&
                          isValidSession(request.resource.data, sessionId) &&
-                         areImmutableFieldsUnchanged(['id', 'startTime']);
+                         areImmutableFieldsUnchanged(['id', 'createdAt']);
 
         // Owner can delete parking sessions
         allow delete: if isOwner(uid);
       }
+
+      // 4. Vehicles Subcollection
+      match /vehicles/{vehicleId} {
+        // Only the profile owner can read their saved vehicles
+        allow read: if isOwner(uid);
+
+        // Owner can create vehicles with validated schema
+        allow create: if isOwner(uid) &&
+                         isValidVehicle(request.resource.data, vehicleId);
+
+        // Owner can update vehicles with validated schema and immutable identity
+        allow update: if isOwner(uid) &&
+                         isValidVehicle(request.resource.data, vehicleId) &&
+                         areImmutableFieldsUnchanged(['id', 'createdAt']);
+
+        // Owner can delete their saved vehicles
+        allow delete: if isOwner(uid);
+      }
+
+      // 5. Saved Locations Subcollection
+      match /locations/{locationId} {
+        // Only the profile owner can read their saved locations
+        allow read: if isOwner(uid);
+
+        // Owner can create custom locations with validated schema
+        allow create: if isOwner(uid) &&
+                         isValidLocation(request.resource.data, locationId);
+
+        // Owner can update custom locations with validated schema and immutable identity
+        allow update: if isOwner(uid) &&
+                         isValidLocation(request.resource.data, locationId) &&
+                         areImmutableFieldsUnchanged(['id', 'createdAt']);
+
+        // Owner can delete their saved locations
+        allow delete: if isOwner(uid);
+      }
+
+      // 6. Onboarding Preferences Subcollection (scoped strictly to 'onboarding')
+      match /preferences/{prefId} {
+        // Only the profile owner can read their onboarding preferences
+        allow read: if isOwner(uid) && prefId == 'onboarding';
+
+        // Owner can create onboarding preferences with validated schema
+        allow create: if isOwner(uid) &&
+                         prefId == 'onboarding' &&
+                         isValidOnboardingPreferences(request.resource.data);
+
+        // Owner can update onboarding preferences with validated schema
+        allow update: if isOwner(uid) &&
+                         prefId == 'onboarding' &&
+                         isValidOnboardingPreferences(request.resource.data);
+
+        // Owner can delete their onboarding preferences
+        allow delete: if isOwner(uid) && prefId == 'onboarding';
+      }
     }
 
-    // 4. Synchronized Parking Data Collection (Read-only for all clients)
+    // 7. Synchronized Parking Data Collection (Read-only for all clients)
     match /parking_data/{documentId} {
       // Anyone (public unauthenticated and authenticated users) can read parking zones
       allow read: if true;
@@ -345,7 +516,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // 5. Default Deny: All other documents and collections are inaccessible
+    // 8. Default Deny: All other documents and collections are inaccessible
     match /{document=**} {
       allow read, write: if false;
     }

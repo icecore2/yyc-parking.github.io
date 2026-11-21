@@ -128,11 +128,11 @@ export default function MiniMapTeaser() {
 
       {/* Map Canvas */}
       <div className="relative h-[380px] sm:h-[450px] w-full bg-slate-100 dark:bg-slate-900">
-        <div ref={mapContainer} className="h-full w-full" />
+        <div ref={mapContainer} className="relative z-0 isolate h-full w-full" />
 
         {/* Selected Zone Float Sheet */}
         {selectedZone && (
-          <div className="absolute bottom-4 left-4 right-4 sm:right-auto sm:max-w-sm rounded-2xl border border-border bg-card/95 p-4 shadow-xl backdrop-blur-md animate-in slide-in-from-bottom-2 duration-200">
+          <div className="absolute bottom-4 left-4 right-4 sm:right-auto sm:max-w-sm z-10 rounded-2xl border border-border bg-card/95 p-4 shadow-xl backdrop-blur-md animate-in slide-in-from-bottom-2 duration-200">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">

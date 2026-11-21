@@ -64,7 +64,7 @@ export default function SecondaryToolbar({
   return (
     <div
       id="filter-toolbar-row"
-      className="z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/95 px-4 py-2 backdrop-blur gap-2 text-xs"
+      className="relative z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/95 px-4 py-2 backdrop-blur gap-2 text-xs"
     >
       {/* Left Section: Custom Location & Proximity Controls */}
       <div className="flex flex-wrap items-center gap-2">

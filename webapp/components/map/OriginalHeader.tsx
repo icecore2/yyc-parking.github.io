@@ -13,8 +13,10 @@ import {
   User as UserIcon,
   LogOut,
   Sparkles,
+  Compass,
 } from 'lucide-react';
 import { useAuth } from '@/lib/firebase/auth-context';
+import { useWalkthrough } from '@/components/onboarding/WalkthroughProvider';
 import AuthModal from '@/components/auth/AuthModal';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -71,7 +73,8 @@ export default function OriginalHeader({
   theme,
   onToggleTheme,
 }: OriginalHeaderProps) {
-  const { user, profile, isPro, signOutUser, toggleDemoTier } = useAuth();
+  const { user, profile, isPro, isAdmin, signOutUser, toggleDemoTier } = useAuth();
+  const { onboardingState, progress, openWalkthrough } = useWalkthrough();
   const [showAuthModal, setShowAuthModal] = useState(false);
 
   return (
@@ -79,7 +82,7 @@ export default function OriginalHeader({
       <header className="sticky top-0 z-30 flex h-14 w-full items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 gap-3">
         {/* Brand Title (Authentic P badge + Calgary Parking Map + Live Rates) */}
         <Link href="/" className="flex items-center gap-2.5 shrink-0 group">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-primary-foreground font-black text-sm shadow-sm group-hover:scale-105 transition-transform">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-black text-sm shadow-sm group-hover:scale-105 transition-transform">
             P
           </div>
           <div className="hidden sm:flex flex-col">
@@ -103,7 +106,7 @@ export default function OriginalHeader({
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="Search zone # or street (e.g. 1008, 10 St)..."
-              className="pl-8 pr-12 h-9"
+              className="pl-8 pr-12 h-8.5 text-xs"
               autoComplete="off"
             />
             {searchQuery && (
@@ -112,12 +115,12 @@ export default function OriginalHeader({
                 variant="ghost"
                 size="iconSm"
                 onClick={() => onSearchChange('')}
-                className="absolute right-7 top-1.5 text-muted-foreground hover:text-foreground"
+                className="absolute right-7 top-1 text-muted-foreground hover:text-foreground h-6.5 w-6.5"
               >
                 <X className="h-3.5 w-3.5" />
               </Button>
             )}
-            <kbd className="pointer-events-none absolute right-2.5 top-2.5 hidden h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
+            <kbd className="pointer-events-none absolute right-2.5 top-2 hidden h-4 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
               ⌘K
             </kbd>
           </div>
@@ -125,7 +128,7 @@ export default function OriginalHeader({
           {/* Area (BRZ) Filter Select */}
           <div className="hidden md:block w-44">
             <Select value={selectedBrz} onValueChange={onBrzChange}>
-              <SelectTrigger className="h-9">
+              <SelectTrigger className="h-8.5 text-xs">
                 <SelectValue placeholder="Select Area" />
               </SelectTrigger>
               <SelectContent>
@@ -141,6 +144,21 @@ export default function OriginalHeader({
 
         {/* Header Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {/* Setup Guide Button */}
+          {(user || profile) && !onboardingState.walkthroughCompleted && !onboardingState.walkthroughDismissed && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => openWalkthrough()}
+              title="Open New User Setup Guide"
+              className="hidden xl:flex items-center gap-1.5 rounded-full px-2.5 h-8 text-xs font-semibold border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/20"
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>Setup {progress.completedCount}/{progress.totalCount}</span>
+            </Button>
+          )}
+
           {/* Quick Demo Tier Switcher Pill */}
           <Button
             type="button"
@@ -175,7 +193,7 @@ export default function OriginalHeader({
             onClick={onRefresh}
             disabled={isRefreshing}
             aria-busy={isRefreshing}
-            className={`group h-8 sm:h-9 px-2.5 sm:px-3 text-xs transition-all duration-200 disabled:pointer-events-none disabled:opacity-65 disabled:cursor-not-allowed ${
+            className={`group h-8 px-2.5 sm:px-3 text-xs transition-all duration-200 disabled:pointer-events-none disabled:opacity-65 disabled:cursor-not-allowed ${
               isRefreshing ? 'ring-2 ring-primary/40 animate-pulse' : ''
             }`}
             title="Fetch latest information from Calgary Parking Authority"
@@ -194,37 +212,39 @@ export default function OriginalHeader({
           <Button
             type="button"
             variant="outline"
-            size="icon"
+            size="iconSm"
             onClick={onToggleTheme}
-            className="h-8 w-8 sm:h-9 sm:w-9"
+            className="h-8 w-8"
             title="Toggle Dark / Light Mode"
           >
             {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
 
-          {/* API & Data Feed Status Button */}
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={onOpenSettings}
-            className="relative h-8 w-8 sm:h-9 sm:w-9"
-            title="Data Feeds & API Status"
-          >
-            <Activity className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-            <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-          </Button>
+          {/* API & Data Feed Status Button (Admins Only) */}
+          {isAdmin && (
+            <Button
+              type="button"
+              variant="outline"
+              size="iconSm"
+              onClick={onOpenSettings}
+              className="relative h-8 w-8"
+              title="Data Feeds & API Status"
+            >
+              <Activity className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            </Button>
+          )}
 
           {/* User Account / Pro Dropdown Menu */}
-          {user ? (
+          {user || profile ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="iconSm" className="h-8 w-8 rounded-xl p-0">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold text-[10px]">
-                    {profile?.displayName?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || 'U'}
+                <Button variant="outline" size="iconSm" className="h-8 w-8 rounded-lg p-0">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-[10px]">
+                    {profile?.displayName?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
                   </div>
                 </Button>
               </DropdownMenuTrigger>
@@ -233,10 +253,10 @@ export default function OriginalHeader({
                   <div className="font-semibold text-foreground truncate">
                     {profile?.displayName || 'Calgary Commuter'}
                   </div>
-                  <div className="text-[10px] text-muted-foreground truncate">{user.email}</div>
+                  <div className="text-[10px] text-muted-foreground truncate">{profile?.email || user?.email || 'Local Demo Account'}</div>
                   <div className="mt-1 flex items-center gap-1">
                     <Badge variant={isPro ? 'warning' : 'secondary'} className="text-[9px] font-bold">
-                      {isPro ? 'PRO SUBSCRIBER' : 'FREE TIER'}
+                      {isAdmin ? 'ADMIN' : isPro ? 'PRO SUBSCRIBER' : 'FREE TIER'}
                     </Badge>
                   </div>
                 </DropdownMenuLabel>
@@ -252,6 +272,10 @@ export default function OriginalHeader({
                     <Sparkles className="w-3.5 h-3.5 text-primary" />
                     <span>Parking Tracker</span>
                   </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openWalkthrough()} className="flex items-center gap-2">
+                  <Compass className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Setup Guide ({progress.completedCount}/{progress.totalCount})</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link href="/pricing" className="flex items-center gap-2">
@@ -273,9 +297,9 @@ export default function OriginalHeader({
             <Button
               type="button"
               variant="outline"
-              size="icon"
+              size="iconSm"
               onClick={() => setShowAuthModal(true)}
-              className="h-8 w-8 sm:h-9 sm:w-9"
+              className="h-8 w-8"
               title="Sign in / Account"
             >
               <UserIcon className="h-4 w-4" />

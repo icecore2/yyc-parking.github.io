@@ -26,7 +26,7 @@ export default function ProviderToolbar({
   return (
     <div
       id="provider-toolbar-row"
-      className="z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/90 px-4 py-1.5 backdrop-blur gap-2 text-xs"
+      className="relative z-20 flex flex-wrap items-center justify-between border-b border-border bg-background/90 px-4 py-1.5 backdrop-blur gap-2 text-xs"
     >
       <div className="flex items-center gap-1.5 text-muted-foreground font-semibold text-[11px] shrink-0">
         <Layers className="h-3.5 w-3.5 text-primary" />

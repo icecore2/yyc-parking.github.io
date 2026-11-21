@@ -31,6 +31,7 @@ interface MapLibreViewProps {
   maxRadius?: number | 'ALL';
   isPickingLocation?: boolean;
   onPickMapPoint?: (coords: [number, number]) => void;
+  hasOpenModal?: boolean;
 }
 
 function createGeoJSONCircle(center: [number, number], radiusInMeters: number, points = 64) {
@@ -69,6 +70,7 @@ export default function MapLibreView({
   maxRadius = 500,
   isPickingLocation = false,
   onPickMapPoint,
+  hasOpenModal = false,
 }: MapLibreViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
@@ -306,6 +308,14 @@ export default function MapLibreView({
     if (!map) return;
     map.getCanvas().style.cursor = isPickingLocation ? 'crosshair' : '';
   }, [isPickingLocation]);
+
+  // Dismiss any open map popup when a modal dialog opens or location picking starts
+  useEffect(() => {
+    if ((isPickingLocation || hasOpenModal) && activePopupRef.current) {
+      activePopupRef.current.remove();
+      activePopupRef.current = null;
+    }
+  }, [isPickingLocation, hasOpenModal]);
 
   // Update Target Destination Marker & Catchment Radius Circle
   useEffect(() => {
@@ -585,8 +595,8 @@ export default function MapLibreView({
   }, [selectedZone]);
 
   return (
-    <div className="relative h-full w-full">
-      <div ref={mapContainer} className="h-full w-full" />
+    <div className="relative z-0 isolate h-full w-full">
+      <div ref={mapContainer} className="relative z-0 isolate h-full w-full" />
     </div>
   );
 }

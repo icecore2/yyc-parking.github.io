@@ -98,8 +98,10 @@ select option {
    Leaflet Map Styling & Dark Mode Integration
    ========================================================================== */
 #map {
+  position: relative;
   background-color: hsl(var(--muted));
   z-index: 1;
+  isolation: isolate;
 }
 
 /* Leaflet Zoom control shadcn styling */
@@ -150,6 +152,7 @@ select option {
   justify-content: center;
   background: none;
   border: none;
+  z-index: 1;
 }
 
 .pin-bubble {
@@ -197,18 +200,26 @@ select option {
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
 }
 
+.custom-pin-marker:hover {
+  z-index: 10 !important;
+}
+
 .custom-pin-marker:hover .pin-bubble {
   transform: rotate(-45deg) scale(1.22);
   filter: brightness(1.1);
   box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
-  z-index: 900 !important;
+  z-index: 10 !important;
+}
+
+.custom-pin-marker.pin-active {
+  z-index: 20 !important;
 }
 
 .pin-active .pin-bubble {
   transform: rotate(-45deg) scale(1.28) !important;
   box-shadow: 0 0 0 4px #f59e0b, 0 6px 14px rgba(0, 0, 0, 0.45) !important;
   border-color: #ffffff !important;
-  z-index: 9999 !important;
+  z-index: 20 !important;
 }
 
 /* Provider Filter Pills */
