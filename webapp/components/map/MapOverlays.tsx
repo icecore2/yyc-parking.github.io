@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { ParkingZone, CustomLocation, BasemapId } from '@/lib/parking/types';
 import { PROVIDERS } from '@/lib/parking/providers';
+import ZonePreviewCard from './ZonePreviewCard';
 
 interface MapOverlaysProps {
   totalZonesCount: number;
@@ -32,6 +33,9 @@ interface MapOverlaysProps {
   onCloseBestValuePanel: () => void;
   bestValueZones: ParkingZone[];
   onSelectZone: (zone: ParkingZone) => void;
+  previewZone?: ParkingZone | null;
+  onInspectZone?: (zone: ParkingZone) => void;
+  onClosePreviewZone?: () => void;
   isRefreshing?: boolean;
 }
 
@@ -53,6 +57,9 @@ export default function MapOverlays({
   onCloseBestValuePanel,
   bestValueZones,
   onSelectZone,
+  previewZone = null,
+  onInspectZone,
+  onClosePreviewZone,
   isRefreshing = false,
 }: MapOverlaysProps) {
   return (
@@ -177,47 +184,62 @@ export default function MapOverlays({
         </div>
       )}
 
-      {/* Floating Map Controls (Bottom-Left Card Overlay) */}
-      <div className="absolute bottom-6 left-4 z-20 flex items-center gap-3 rounded-lg border border-border bg-background/95 px-3 py-2 shadow-lg backdrop-blur text-xs">
-        <label className="flex items-center gap-1.5 cursor-pointer select-none text-foreground font-medium">
-          <input
-            type="checkbox"
-            checked={showPins}
-            onChange={onTogglePins}
-            className="h-3.5 w-3.5 rounded border-border text-primary accent-neutral-900 dark:accent-neutral-100"
+      {/* Bottom-Left Overlay Stack: Selected Zone Preview Card + Floating Map Controls */}
+      <div
+        id="bottom-left-map-stack"
+        className="absolute bottom-6 left-4 right-4 sm:right-auto z-20 flex flex-col items-start gap-2.5 pointer-events-none"
+      >
+        {previewZone && (
+          <ZonePreviewCard
+            zone={previewZone}
+            onInspect={onInspectZone || onSelectZone}
+            onClose={onClosePreviewZone}
+            className="pointer-events-auto w-full sm:w-[380px] sm:max-w-sm"
           />
-          <span className="flex items-center gap-1">
-            <MapPin className="h-3.5 w-3.5 text-muted-foreground" /> Pins
-          </span>
-        </label>
+        )}
 
-        <div className="h-4 w-px bg-border" />
+        {/* Floating Map Controls (Bottom-Left Card Overlay) */}
+        <div className="pointer-events-auto flex items-center gap-3 rounded-lg border border-border bg-background/95 px-3 py-2 shadow-lg backdrop-blur text-xs">
+          <label className="flex items-center gap-1.5 cursor-pointer select-none text-foreground font-medium">
+            <input
+              type="checkbox"
+              checked={showPins}
+              onChange={onTogglePins}
+              className="h-3.5 w-3.5 rounded border-border text-primary accent-neutral-900 dark:accent-neutral-100"
+            />
+            <span className="flex items-center gap-1">
+              <MapPin className="h-3.5 w-3.5 text-muted-foreground" /> Pins
+            </span>
+          </label>
 
-        <label className="flex items-center gap-1.5 cursor-pointer select-none text-foreground font-medium">
-          <input
-            type="checkbox"
-            checked={showShapes}
-            onChange={onToggleShapes}
-            className="h-3.5 w-3.5 rounded border-border text-primary accent-neutral-900 dark:accent-neutral-100"
-          />
-          <span className="flex items-center gap-1">
-            <Route className="h-3.5 w-3.5 text-muted-foreground" /> Shapes
-          </span>
-        </label>
+          <div className="h-4 w-px bg-border" />
 
-        <div className="h-4 w-px bg-border" />
+          <label className="flex items-center gap-1.5 cursor-pointer select-none text-foreground font-medium">
+            <input
+              type="checkbox"
+              checked={showShapes}
+              onChange={onToggleShapes}
+              className="h-3.5 w-3.5 rounded border-border text-primary accent-neutral-900 dark:accent-neutral-100"
+            />
+            <span className="flex items-center gap-1">
+              <Route className="h-3.5 w-3.5 text-muted-foreground" /> Shapes
+            </span>
+          </label>
 
-        <label className="flex items-center gap-1.5 cursor-pointer select-none text-foreground font-medium">
-          <input
-            type="checkbox"
-            checked={showCluster}
-            onChange={onToggleCluster}
-            className="h-3.5 w-3.5 rounded border-border text-primary accent-neutral-900 dark:accent-neutral-100"
-          />
-          <span className="flex items-center gap-1">
-            <Network className="h-3.5 w-3.5 text-muted-foreground" /> Cluster
-          </span>
-        </label>
+          <div className="h-4 w-px bg-border" />
+
+          <label className="flex items-center gap-1.5 cursor-pointer select-none text-foreground font-medium">
+            <input
+              type="checkbox"
+              checked={showCluster}
+              onChange={onToggleCluster}
+              className="h-3.5 w-3.5 rounded border-border text-primary accent-neutral-900 dark:accent-neutral-100"
+            />
+            <span className="flex items-center gap-1">
+              <Network className="h-3.5 w-3.5 text-muted-foreground" /> Cluster
+            </span>
+          </label>
+        </div>
       </div>
 
       {/* Price & Provider Legend (Bottom-Right Card Overlay) */}

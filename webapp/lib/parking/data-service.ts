@@ -1,5 +1,6 @@
-import { ParkingZone } from './types';
+import { ParkingZone, ParkingZoneGeometry } from './types';
 import { parseRateSchedule, getCurrentRate } from './rate-parser';
+import { getPrimaryPath, pointAlongPolyline } from './geometry';
 
 interface ArcGISFeature {
   attributes?: Record<string, string | number | null | undefined>;
@@ -31,6 +32,7 @@ function toWgs84(x: number, y: number): [number, number] {
 export const SAMPLE_CALGARY_ZONES: ParkingZone[] = [
   {
     id: '1008',
+    zoneNumber: '1008',
     title: 'Zone #1008',
     address: 'Eau Claire Ave SW, Fr 4 St SW To 5 St SW',
     blockSide: 'North',
@@ -60,6 +62,7 @@ export const SAMPLE_CALGARY_ZONES: ParkingZone[] = [
   },
   {
     id: '1042',
+    zoneNumber: '1042',
     title: 'Zone #1042',
     address: '8 Avenue SW (Stephen Ave), Fr 5 St SW To 6 St SW',
     blockSide: 'South',
@@ -89,6 +92,7 @@ export const SAMPLE_CALGARY_ZONES: ParkingZone[] = [
   },
   {
     id: '1210',
+    zoneNumber: '1210',
     title: 'Zone #1210',
     address: '10 Avenue SW, Fr 1 St SW To 2 St SW',
     blockSide: 'North',
@@ -118,6 +122,7 @@ export const SAMPLE_CALGARY_ZONES: ParkingZone[] = [
   },
   {
     id: '1330',
+    zoneNumber: '1330',
     title: 'Zone #1330',
     address: '17 Avenue SW, Fr 4 St SW To 5 St SW',
     blockSide: 'South',
@@ -146,6 +151,7 @@ export const SAMPLE_CALGARY_ZONES: ParkingZone[] = [
   },
   {
     id: '1505',
+    zoneNumber: '1505',
     title: 'Zone #1505',
     address: 'Kensington Rd NW, Fr 10 St NW To 11 St NW',
     blockSide: 'North',
@@ -253,7 +259,7 @@ export const SAMPLE_CALGARY_ZONES: ParkingZone[] = [
   },
 ];
 
-const CACHE_KEY = 'yyc_parking_zones_v2';
+export const CACHE_KEY = 'yyc_parking_zones_v3';
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 let inMemoryCache: { zones: ParkingZone[]; timestamp: number } | null = null;
 
@@ -378,22 +384,34 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
       const paths = geom.paths;
       if (!paths || paths.length === 0) continue;
 
-      const subPath = paths[0];
-      if (!subPath || subPath.length === 0) continue;
+      const wgsPaths: [number, number][][] = paths
+        .filter((p) => Array.isArray(p) && p.length > 0)
+        .map((p) => p.map((pt) => toWgs84(pt[0], pt[1])));
+      if (wgsPaths.length === 0) continue;
 
-      const wgsPath: [number, number][] = subPath.map((pt) =>
-        toWgs84(pt[0], pt[1])
-      );
+      const geometry: ParkingZoneGeometry =
+        wgsPaths.length === 1
+          ? { type: 'LineString', coordinates: wgsPaths[0] }
+          : { type: 'MultiLineString', coordinates: wgsPaths };
 
-      // Midpoint coordinate
-      const midIdx = Math.floor(wgsPath.length / 2);
-      const midpoint = wgsPath[midIdx] || wgsPath[0];
+      const primaryPath = getPrimaryPath(geometry) || wgsPaths[0];
+      const midpoint = pointAlongPolyline(primaryPath, 0.5);
 
       const htmlRates = attrs.HTML_ZONE_RATE ? String(attrs.HTML_ZONE_RATE) : '';
       const { intervals, periods } = parseRateSchedule(htmlRates);
       const currentRateCalc = getCurrentRate(intervals);
 
-      const zoneId = attrs.PARKING_ZONE ? String(attrs.PARKING_ZONE) : String(attrs.OBJECTID || '');
+      const objectId =
+        attrs.OBJECTID !== undefined && attrs.OBJECTID !== null
+          ? String(attrs.OBJECTID).trim()
+          : '';
+      const zoneNumber = attrs.PARKING_ZONE
+        ? String(attrs.PARKING_ZONE).trim()
+        : objectId || String(i);
+      const uniqueId = objectId
+        ? `parkplus_${objectId}`
+        : `parkplus_${zoneNumber}_${i}`;
+
       const restrictions: string[] = [];
       if (attrs.NO_PARKING) restrictions.push(`No Parking: ${attrs.NO_PARKING}`);
       if (attrs.NO_STOPPING) restrictions.push(`No Stopping: ${attrs.NO_STOPPING}`);
@@ -404,8 +422,9 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
       const stallCount = Number(attrs.SEG_CAP || attrs.ZONE_CAP) || 10;
 
       liveZones.push({
-        id: zoneId,
-        title: `Zone #${zoneId}`,
+        id: uniqueId,
+        zoneNumber,
+        title: `Zone #${zoneNumber}`,
         address: String(attrs.ADDRESS_DESC || 'Calgary, AB').trim(),
         blockSide: attrs.BLOCK_SIDE ? String(attrs.BLOCK_SIDE).trim() : undefined,
         stallCount,
@@ -420,10 +439,7 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
         activeRate: currentRateCalc.rate,
         isCurrentlyFree: currentRateCalc.isFree,
         coordinates: midpoint,
-        geometry: {
-          type: 'LineString',
-          coordinates: wgsPath,
-        },
+        geometry,
         provider: 'parkplus_on_street',
         restrictions,
       });

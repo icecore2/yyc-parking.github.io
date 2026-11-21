@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Map,
   Marker,
-  Popup,
   NavigationControl,
   GeolocateControl,
   GeoJSONSource,
@@ -12,6 +11,7 @@ import {
 } from 'maplibre-gl';
 import { ParkingZone, CustomLocation, BasemapId } from '@/lib/parking/types';
 import { PROVIDERS } from '@/lib/parking/providers';
+import { resolvePinAnchorCoordinates } from '@/lib/parking/geometry';
 
 if (typeof window !== 'undefined' && !config.WORKER_URL) {
   config.WORKER_URL = '/maplibre-gl-worker.mjs';
@@ -23,6 +23,8 @@ interface MapLibreViewProps {
   zones: ParkingZone[];
   selectedZone: ParkingZone | null;
   onSelectZone: (zone: ParkingZone) => void;
+  previewZone?: ParkingZone | null;
+  onPreviewZone?: (zone: ParkingZone | null) => void;
   basemap?: BasemapId;
   showPins?: boolean;
   showShapes?: boolean;
@@ -62,6 +64,8 @@ export default function MapLibreView({
   zones,
   selectedZone,
   onSelectZone,
+  previewZone = null,
+  onPreviewZone,
   basemap = 'osm',
   showPins = true,
   showShapes = true,
@@ -76,20 +80,41 @@ export default function MapLibreView({
   const mapRef = useRef<Map | null>(null);
   const markersRef = useRef<Marker[]>([]);
   const markerElementsRef = useRef<Record<string, HTMLDivElement>>({});
+  const pinAnchorMapRef = useRef<globalThis.Map<string, [number, number]>>(new globalThis.Map());
   const targetMarkerRef = useRef<Marker | null>(null);
-  const activePopupRef = useRef<Popup | null>(null);
+  const styleReadyRef = useRef(false);
+  const lastFlownKeyRef = useRef<string>('');
+  const [mapStyleReady, setMapStyleReady] = useState(false);
+
+  const pinAnchorMap = useMemo(() => resolvePinAnchorCoordinates(zones), [zones]);
 
   const zonesRef = useRef(zones);
   const onSelectZoneRef = useRef(onSelectZone);
   const selectedZoneRef = useRef(selectedZone);
+  const previewZoneRef = useRef(previewZone);
+  const onPreviewZoneRef = useRef(onPreviewZone);
+  const isPickingLocationRef = useRef(isPickingLocation);
   const onPickMapPointRef = useRef(onPickMapPoint);
 
-  useEffect(() => {
+    useEffect(() => {
     zonesRef.current = zones;
     onSelectZoneRef.current = onSelectZone;
     selectedZoneRef.current = selectedZone;
+    previewZoneRef.current = previewZone;
+    onPreviewZoneRef.current = onPreviewZone;
+    isPickingLocationRef.current = isPickingLocation;
     onPickMapPointRef.current = onPickMapPoint;
-  }, [zones, onSelectZone, selectedZone, onPickMapPoint]);
+    pinAnchorMapRef.current = pinAnchorMap;
+  }, [
+    zones,
+    onSelectZone,
+    selectedZone,
+    previewZone,
+    onPreviewZone,
+    isPickingLocation,
+    onPickMapPoint,
+    pinAnchorMap,
+  ]);
 
   // Initialize Map with 100% Free OpenStreetMap & Keyless Basemaps (No watermarks)
   useEffect(() => {
@@ -223,7 +248,25 @@ export default function MapLibreView({
         },
       });
 
-      // Layer: Glow highlight for selected line (bright amber)
+      // Layer: Soft outer glow highlight for selected stalls bar (amber)
+      map.addLayer({
+        id: 'parking-selected-line-glow',
+        type: 'line',
+        source: 'parking-lines-source',
+        filter: ['==', ['get', 'id'], ''],
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round',
+        },
+        paint: {
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 10, 16, 18, 18, 22],
+          'line-color': '#f59e0b',
+          'line-opacity': 0.35,
+          'line-blur': 3,
+        },
+      });
+
+      // Layer: Core highlight for selected stalls bar (bright amber)
       map.addLayer({
         id: 'parking-selected-line-layer',
         type: 'line',
@@ -234,19 +277,52 @@ export default function MapLibreView({
           'line-cap': 'round',
         },
         paint: {
-          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 7, 16, 13],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 6, 16, 11, 18, 14],
           'line-color': '#f59e0b',
-          'line-opacity': 0.95,
+          'line-opacity': 1,
         },
       });
 
-      // Click on line opens zone details
-      map.on('click', 'parking-lines-layer', (e) => {
+      // Contact ring directly under the sharp teardrop tip on the stalls bar
+      map.addSource('parking-selected-anchor-source', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: [],
+        },
+      });
+
+      map.addLayer({
+        id: 'parking-selected-anchor-layer',
+        type: 'circle',
+        source: 'parking-selected-anchor-source',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 4, 16, 6],
+          'circle-color': '#f59e0b',
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ffffff',
+          'circle-opacity': 1,
+        },
+      });
+
+      const handleLineClick = (e: { features?: { properties?: { id?: string } }[] }) => {
+        if (isPickingLocationRef.current) return;
         if (!e.features || e.features.length === 0) return;
         const featId = e.features[0].properties?.id;
         const match = zonesRef.current.find((z) => z.id === featId);
-        if (match) onSelectZoneRef.current(match);
-      });
+        if (!match) return;
+        if (selectedZoneRef.current) {
+          onSelectZoneRef.current(match);
+        } else if (onPreviewZoneRef.current) {
+          onPreviewZoneRef.current(match);
+        } else {
+          onSelectZoneRef.current(match);
+        }
+      };
+
+      // Click on base or highlighted line previews zone (or updates open details sheet)
+      map.on('click', 'parking-lines-layer', handleLineClick);
+      map.on('click', 'parking-selected-line-layer', handleLineClick);
 
       map.on('mouseenter', 'parking-lines-layer', () => {
         map.getCanvas().style.cursor = 'pointer';
@@ -254,18 +330,41 @@ export default function MapLibreView({
       map.on('mouseleave', 'parking-lines-layer', () => {
         map.getCanvas().style.cursor = '';
       });
+      map.on('mouseenter', 'parking-selected-line-layer', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'parking-selected-line-layer', () => {
+        map.getCanvas().style.cursor = '';
+      });
 
-      // Click anywhere to pick location point (if in picker mode)
+      // Click anywhere to pick location point (if in picker mode) or dismiss preview card
       map.on('click', (e) => {
-        if (onPickMapPointRef.current) {
+        const clickTarget = e.originalEvent?.target as HTMLElement | null;
+        if (clickTarget?.closest('.custom-pin-marker')) {
+          return;
+        }
+        if (isPickingLocationRef.current && onPickMapPointRef.current) {
           onPickMapPointRef.current([e.lngLat.lng, e.lngLat.lat]);
+          return;
+        }
+        const queryLayers = ['parking-lines-layer', 'parking-selected-line-layer'].filter((id) =>
+          Boolean(map.getLayer(id))
+        );
+        const hitLines =
+          queryLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: queryLayers }) : [];
+        if (hitLines.length === 0 && previewZoneRef.current && onPreviewZoneRef.current) {
+          onPreviewZoneRef.current(null);
         }
       });
+
+      styleReadyRef.current = true;
+      setMapStyleReady(true);
     });
 
     mapRef.current = map;
 
     return () => {
+      styleReadyRef.current = false;
       map.remove();
       mapRef.current = null;
     };
@@ -274,33 +373,25 @@ export default function MapLibreView({
   // Update basemap layer visibility dynamically when basemap changes
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !styleReadyRef.current) return;
 
-    const applyVisibility = () => {
-      if (map.getLayer('layer-osm-standard')) {
-        map.setLayoutProperty('layer-osm-standard', 'visibility', basemap === 'osm' ? 'visible' : 'none');
-      }
-      if (map.getLayer('layer-carto-light')) {
-        map.setLayoutProperty('layer-carto-light', 'visibility', basemap === 'light' ? 'visible' : 'none');
-      }
-      if (map.getLayer('layer-osm-hot')) {
-        map.setLayoutProperty('layer-osm-hot', 'visibility', basemap === 'hot' ? 'visible' : 'none');
-      }
-    };
-
-    if (map.isStyleLoaded()) {
-      applyVisibility();
-    } else {
-      map.once('load', applyVisibility);
+    if (map.getLayer('layer-osm-standard')) {
+      map.setLayoutProperty('layer-osm-standard', 'visibility', basemap === 'osm' ? 'visible' : 'none');
     }
-  }, [basemap]);
+    if (map.getLayer('layer-carto-light')) {
+      map.setLayoutProperty('layer-carto-light', 'visibility', basemap === 'light' ? 'visible' : 'none');
+    }
+    if (map.getLayer('layer-osm-hot')) {
+      map.setLayoutProperty('layer-osm-hot', 'visibility', basemap === 'hot' ? 'visible' : 'none');
+    }
+  }, [basemap, mapStyleReady]);
 
   // Update Shapes layer visibility
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded() || !map.getLayer('parking-lines-layer')) return;
+    if (!map || !styleReadyRef.current || !map.getLayer('parking-lines-layer')) return;
     map.setLayoutProperty('parking-lines-layer', 'visibility', showShapes ? 'visible' : 'none');
-  }, [showShapes]);
+  }, [showShapes, mapStyleReady]);
 
   // Cursor in picking mode
   useEffect(() => {
@@ -309,11 +400,10 @@ export default function MapLibreView({
     map.getCanvas().style.cursor = isPickingLocation ? 'crosshair' : '';
   }, [isPickingLocation]);
 
-  // Dismiss any open map popup when a modal dialog opens or location picking starts
+  // Dismiss any open zone preview card when a modal dialog opens or location picking starts
   useEffect(() => {
-    if ((isPickingLocation || hasOpenModal) && activePopupRef.current) {
-      activePopupRef.current.remove();
-      activePopupRef.current = null;
+    if ((isPickingLocation || hasOpenModal) && previewZoneRef.current && onPreviewZoneRef.current) {
+      onPreviewZoneRef.current(null);
     }
   }, [isPickingLocation, hasOpenModal]);
 
@@ -327,22 +417,16 @@ export default function MapLibreView({
       targetMarkerRef.current = null;
     }
 
-    const updateRadius = () => {
-      const source = map.getSource('catchment-radius-source') as GeoJSONSource;
-      if (!source) return;
-
-      if (!activeLocation || maxRadius === 'ALL') {
-        source.setData({ type: 'FeatureCollection', features: [] });
-      } else {
-        const circleFeature = createGeoJSONCircle(activeLocation.coordinates, Number(maxRadius));
-        source.setData({ type: 'FeatureCollection', features: [circleFeature] });
+    if (styleReadyRef.current) {
+      const source = map.getSource('catchment-radius-source') as GeoJSONSource | undefined;
+      if (source) {
+        if (!activeLocation || maxRadius === 'ALL') {
+          source.setData({ type: 'FeatureCollection', features: [] });
+        } else {
+          const circleFeature = createGeoJSONCircle(activeLocation.coordinates, Number(maxRadius));
+          source.setData({ type: 'FeatureCollection', features: [circleFeature] });
+        }
       }
-    };
-
-    if (map.isStyleLoaded()) {
-      updateRadius();
-    } else {
-      map.once('load', updateRadius);
     }
 
     if (activeLocation) {
@@ -365,21 +449,16 @@ export default function MapLibreView({
         speed: 1.2,
       });
     }
-  }, [activeLocation, maxRadius]);
+  }, [activeLocation, maxRadius, mapStyleReady]);
 
-  // Update polylines and authentic teardrop pin markers when zones or rateMode change
+  // Sync GeoJSON stalls bars source whenever zones or map readiness changes
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !styleReadyRef.current) return;
 
-    // Clear existing HTML markers
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current = [];
-    markerElementsRef.current = {};
-
-    // Build GeoJSON features for lines
+    // Build GeoJSON features for stalls bars (supports LineString & MultiLineString)
     const lineFeatures = zones
-      .filter((z) => z.geometry && z.geometry.coordinates && z.geometry.coordinates.length > 0)
+      .filter((z) => Boolean(z.geometry && z.geometry.coordinates && z.geometry.coordinates.length > 0))
       .map((z) => {
         let color = '#059669'; // Green (Free)
         if (!z.isCurrentlyFree) {
@@ -392,40 +471,77 @@ export default function MapLibreView({
           type: 'Feature' as const,
           properties: {
             id: z.id,
+            zoneNumber: z.zoneNumber || z.id,
             title: z.title,
             rate: z.activeRate,
             color,
           },
-          geometry: {
-            type: 'LineString' as const,
-            coordinates: z.geometry!.coordinates,
-          },
+          geometry: z.geometry!,
         };
       });
 
-    const updateSource = () => {
-      const source = map.getSource('parking-lines-source') as GeoJSONSource;
-      if (source) {
-        source.setData({
-          type: 'FeatureCollection',
-          features: lineFeatures,
-        });
-      }
-    };
-
-    if (map.isStyleLoaded()) {
-      updateSource();
-    } else {
-      map.once('load', updateSource);
+    const source = map.getSource('parking-lines-source') as GeoJSONSource | undefined;
+    if (source) {
+      source.setData({
+        type: 'FeatureCollection',
+        features: lineFeatures,
+      });
     }
+
+    const activeZone = selectedZoneRef.current || previewZoneRef.current || null;
+    const filterExpr = [
+      '==',
+      ['get', 'id'],
+      activeZone ? activeZone.id : '',
+    ] as ['==', ['get', string], string];
+
+    if (map.getLayer('parking-selected-line-glow')) {
+      map.setFilter('parking-selected-line-glow', filterExpr);
+    }
+    if (map.getLayer('parking-selected-line-layer')) {
+      map.setFilter('parking-selected-line-layer', filterExpr);
+    }
+    const anchorSource = map.getSource('parking-selected-anchor-source') as
+      | GeoJSONSource
+      | undefined;
+    if (anchorSource) {
+      if (activeZone) {
+        const anchorCoord = pinAnchorMap.get(activeZone.id) || activeZone.coordinates;
+        anchorSource.setData({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: { id: activeZone.id },
+              geometry: { type: 'Point', coordinates: anchorCoord },
+            },
+          ],
+        });
+      } else {
+        anchorSource.setData({ type: 'FeatureCollection', features: [] });
+      }
+    }
+  }, [zones, pinAnchorMap, mapStyleReady]);
+
+  // Update authentic teardrop pin markers anchored by exact sharp tip on each stalls bar
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Clear existing HTML markers
+    markersRef.current.forEach((m) => m.remove());
+    markersRef.current = [];
+    markerElementsRef.current = {};
 
     if (!showPins) return;
 
-    // Add Authentic Teardrop Branded Pin Markers
     zones.forEach((zone) => {
       const el = document.createElement('div');
-      const isSelected = selectedZoneRef.current?.id === zone.id;
+      const activeId = selectedZoneRef.current?.id || previewZoneRef.current?.id;
+      const isSelected = activeId === zone.id;
       el.className = `custom-pin-marker ${isSelected ? 'pin-active' : ''}`;
+      el.dataset.zoneId = zone.id;
+      el.dataset.zoneNumber = zone.zoneNumber || zone.id;
       el.title = `${zone.title} - ${zone.address}`;
 
       const prov = PROVIDERS[zone.provider] || PROVIDERS.parkplus_on_street;
@@ -446,16 +562,10 @@ export default function MapLibreView({
         bubble.appendChild(logoDiv);
       }
 
-      el.appendChild(bubble);
-
-      // On pin click: open authentic popup card
-      el.addEventListener('click', (ev) => {
+      // Attach click directly on visible teardrop bubble so transparent marker corners never block neighbor pins
+      bubble.addEventListener('click', (ev) => {
         ev.stopPropagation();
-
-        if (activePopupRef.current) {
-          activePopupRef.current.remove();
-          activePopupRef.current = null;
-        }
+        if (isPickingLocationRef.current) return;
 
         // If the details sheet is already open, immediately update to this clicked pin's details!
         if (selectedZoneRef.current) {
@@ -463,136 +573,98 @@ export default function MapLibreView({
           return;
         }
 
-        const popupContent = document.createElement('div');
-        popupContent.className = 'p-3 flex flex-col gap-2 min-w-[240px] text-xs text-foreground';
-
-        popupContent.innerHTML = `
-          <div class="flex items-center justify-between gap-2">
-            <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border ${prov.badgeClass}">
-              ${prov.shortName}
-            </span>
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
-              zone.isCurrentlyFree
-                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                : 'bg-primary/10 text-primary border border-primary/20'
-            }">
-              ${zone.isCurrentlyFree ? 'FREE' : `$${zone.activeRate.toFixed(2)} / hr`}
-            </span>
-          </div>
-
-          <div class="font-bold text-xs text-foreground leading-snug">${zone.title}</div>
-          <div class="text-[11px] text-muted-foreground">${zone.address}</div>
-
-          ${
-            zone.distanceToTarget !== undefined && zone.distanceToTarget !== null
-              ? `<div class="flex items-center gap-1.5 text-[11px] font-semibold text-primary bg-primary/5 rounded-md px-2 py-1 border border-primary/20">
-                  <span>${Math.round(zone.distanceToTarget)}m • ~${zone.walkingMinutes} min walk from Target</span>
-                </div>`
-              : ''
-          }
-
-          <div class="text-[11px] text-muted-foreground flex flex-col gap-0.5 border-t border-border pt-1.5 mt-0.5">
-            <div><strong>Hours:</strong> ${zone.enforceableHours || '09:00 - 18:00'}</div>
-            <div><strong>Capacity:</strong> ${zone.stallCount || 12} stalls • ${zone.stallType || 'Standard'}</div>
-            <div><strong>Operator:</strong> ${prov.operator}</div>
-          </div>
-
-          <div class="flex flex-col gap-1.5 mt-1">
-            <button
-              id="popup-btn-details-${zone.id}"
-              class="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow hover:bg-primary/90 transition-colors cursor-pointer"
-            >
-              Full Details &amp; Rates
-            </button>
-            ${
-              zone.paymentUrl
-                ? `<a
-                    href="${zone.paymentUrl}"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="inline-flex w-full items-center justify-center gap-1 rounded-md border border-input bg-background hover:bg-accent px-2.5 py-1 text-[11px] font-semibold text-foreground transition-colors"
-                  >
-                    Open ${zone.paymentApp || prov.paymentApp || 'Provider Website'}
-                  </a>`
-                : ''
-            }
-          </div>
-        `;
-
-        const popup = new Popup({
-          offset: [0, -28],
-          closeButton: true,
-          closeOnClick: true,
-          maxWidth: '300px',
-        })
-          .setLngLat(zone.coordinates)
-          .setDOMContent(popupContent)
-          .addTo(map);
-
-        activePopupRef.current = popup;
-
-        // Hook click on details button inside popup immediately without timeout
-        const btn = popupContent.querySelector(`#popup-btn-details-${zone.id}`);
-        if (btn) {
-          btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            popup.remove();
-            activePopupRef.current = null;
-            onSelectZoneRef.current(zone);
-          });
+        if (onPreviewZoneRef.current) {
+          onPreviewZoneRef.current(zone);
+        } else {
+          onSelectZoneRef.current(zone);
         }
       });
 
+      el.appendChild(bubble);
       markerElementsRef.current[zone.id] = el;
 
-      const marker = new Marker({ element: el })
-        .setLngLat(zone.coordinates)
+      const anchorCoord = pinAnchorMap.get(zone.id) || zone.coordinates;
+      const marker = new Marker({ element: el, anchor: 'bottom' })
+        .setLngLat(anchorCoord)
         .addTo(map);
 
       markersRef.current.push(marker);
     });
-  }, [zones, showPins, rateMode]);
+  }, [zones, pinAnchorMap, showPins, rateMode]);
 
-  // When selected zone changes, highlight line and marker in O(1) time
+  // When selected or previewed zone changes, highlight pin, stalls bar & sharp-tip contact point
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
+    const activeZone = selectedZone || previewZone || null;
+
     Object.entries(markerElementsRef.current).forEach(([id, el]) => {
-      if (id === selectedZone?.id) {
+      if (id === activeZone?.id) {
         el.classList.add('pin-active');
       } else {
         el.classList.remove('pin-active');
       }
     });
 
-    if (!selectedZone) {
-      if (map.getLayer('parking-selected-line-layer')) {
-        map.setFilter('parking-selected-line-layer', ['==', ['get', 'id'], '']);
+    if (styleReadyRef.current) {
+      const filterExpr = [
+        '==',
+        ['get', 'id'],
+        activeZone ? activeZone.id : '',
+      ] as ['==', ['get', string], string];
+
+      if (map.getLayer('parking-selected-line-glow')) {
+        map.setFilter('parking-selected-line-glow', filterExpr);
       }
+      if (map.getLayer('parking-selected-line-layer')) {
+        map.setFilter('parking-selected-line-layer', filterExpr);
+      }
+
+      const anchorSource = map.getSource('parking-selected-anchor-source') as
+        | GeoJSONSource
+        | undefined;
+      if (anchorSource) {
+        if (activeZone) {
+          const anchorCoord = pinAnchorMap.get(activeZone.id) || activeZone.coordinates;
+          anchorSource.setData({
+            type: 'FeatureCollection',
+            features: [
+              {
+                type: 'Feature',
+                properties: { id: activeZone.id },
+                geometry: { type: 'Point', coordinates: anchorCoord },
+              },
+            ],
+          });
+        } else {
+          anchorSource.setData({ type: 'FeatureCollection', features: [] });
+        }
+      }
+    }
+
+    if (!activeZone) {
+      lastFlownKeyRef.current = '';
       return;
     }
 
-    if (activePopupRef.current) {
-      activePopupRef.current.remove();
-      activePopupRef.current = null;
-    }
+    const flyKey = `${activeZone.id}:${Boolean(selectedZone)}`;
+    if (lastFlownKeyRef.current === flyKey) return;
+    lastFlownKeyRef.current = flyKey;
 
-    if (map.getLayer('parking-selected-line-layer')) {
-      map.setFilter('parking-selected-line-layer', ['==', ['get', 'id'], selectedZone.id]);
-    }
-
+    const anchorCoord = pinAnchorMap.get(activeZone.id) || activeZone.coordinates;
     const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 640;
+    const isDetailSheetOpen = Boolean(selectedZone);
 
     map.flyTo({
-      center: selectedZone.coordinates,
-      zoom: 16,
+      center: anchorCoord,
+      zoom: Math.max(map.getZoom(), isDetailSheetOpen ? 16 : 15.5),
       speed: 1.2,
       curve: 1.4,
       essential: true,
-      offset: isDesktop ? [-160, 0] : [0, 0],
+      offset: isDetailSheetOpen && isDesktop ? [-160, 0] : [0, 0],
     });
-  }, [selectedZone]);
+  }, [selectedZone, previewZone, pinAnchorMap, mapStyleReady]);
 
   return (
     <div className="relative z-0 isolate h-full w-full">

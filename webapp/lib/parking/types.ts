@@ -40,6 +40,16 @@ export interface HourlyRatePoint {
   isEnforced: boolean;
 }
 
+export type ParkingZoneGeometry =
+  | {
+      type: 'LineString';
+      coordinates: [number, number][]; // [[lng, lat], ...]
+    }
+  | {
+      type: 'MultiLineString';
+      coordinates: [number, number][][]; // [[[lng, lat], ...], ...]
+    };
+
 export interface ParkingZone {
   id: string; // Zone number, e.g. "1008" or "lot_12"
   title: string;
@@ -58,10 +68,7 @@ export interface ParkingZone {
   activeRate: number; // Current hourly rate right now
   isCurrentlyFree: boolean;
   coordinates: [number, number]; // [lng, lat]
-  geometry?: {
-    type: 'LineString';
-    coordinates: [number, number][]; // [[lng, lat], ...]
-  };
+  geometry?: ParkingZoneGeometry;
   provider: ProviderId;
   provider_name?: string; // Dedicated provider name column e.g. 'MyParking', 'Parkade', 'Impark'
   restrictions?: string[];

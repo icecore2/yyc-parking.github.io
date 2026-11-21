@@ -41,10 +41,15 @@ export interface NormalizedParkingRecord {
   isCurrentlyFree: boolean;
   rateSchedule: RatePeriod[];
   coordinates: [number, number]; // [lng, lat]
-  geometry?: {
-    type: 'LineString';
-    coordinates: [number, number][];
-  };
+  geometry?:
+    | {
+        type: 'LineString';
+        coordinates: [number, number][];
+      }
+    | {
+        type: 'MultiLineString';
+        coordinates: [number, number][][];
+      };
   restrictions: string[];
   paymentApp?: string;
   paymentUrl?: string;

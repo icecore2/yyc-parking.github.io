@@ -95,8 +95,12 @@ assert.ok(
 );
 assert.ok(
   /hasOpenModal\?: boolean/.test(mapLibreView) &&
-    /\(isPickingLocation \|\| hasOpenModal\) && activePopupRef\.current/.test(mapLibreView),
-  'MapLibreView must dismiss active MapLibre popup when a modal dialog opens or location picking starts'
+    /\(isPickingLocation \|\| hasOpenModal\) && previewZoneRef\.current && onPreviewZoneRef\.current/.test(mapLibreView),
+  'MapLibreView must dismiss active zone preview card when a modal dialog opens or location picking starts'
+);
+assert.ok(
+  !/new Popup\(/.test(mapLibreView),
+  'MapLibreView should use the shared ZonePreviewCard instead of raw MapLibre Popup HTML'
 );
 
 const appPage = readWebappFile('app/app/page.tsx');
@@ -108,6 +112,7 @@ assert.ok(
 );
 
 const miniMapTeaser = readWebappFile('components/landing/MiniMapTeaser.tsx');
+const zonePreviewCard = readWebappFile('components/map/ZonePreviewCard.tsx');
 assert.ok(
   /<div ref=\{mapContainer\} className="[^"]*\brelative\b[^"]*\bz-0\b[^"]*\bisolate\b[^"]*"/.test(
     miniMapTeaser
@@ -118,12 +123,28 @@ const teaserFloatMatch = miniMapTeaser.match(/Selected Zone Float Sheet[\s\S]*?<
 assert.ok(teaserFloatMatch, 'MiniMapTeaser Selected Zone Float Sheet className must exist');
 const teaserFloatZ = parseTailwindZIndex(teaserFloatMatch[1], 'MiniMapTeaser float sheet');
 assert.ok(teaserFloatZ >= 10, `MiniMapTeaser float sheet z-index (${teaserFloatZ}) must stay above map (z-0)`);
-console.log('  ✓ MapLibreView, MapAppPage modal popup dismissal & MiniMapTeaser isolation verified');
+assert.ok(
+  /import ZonePreviewCard/.test(miniMapTeaser) && /<ZonePreviewCard/.test(miniMapTeaser),
+  'MiniMapTeaser must render the shared ZonePreviewCard component'
+);
+assert.ok(
+  /id="zone-preview-card"/.test(zonePreviewCard) && /Inspect Zone →/.test(zonePreviewCard),
+  'ZonePreviewCard must render the unified landing-page card layout and Inspect Zone action'
+);
+console.log('  ✓ MapLibreView, MapAppPage modal preview dismissal & shared ZonePreviewCard contract verified');
 
 // -----------------------------------------------------------------------------
 // 3. Strict UI Layering Hierarchy Verification
 // -----------------------------------------------------------------------------
 const mapOverlays = readWebappFile('components/map/MapOverlays.tsx');
+assert.ok(
+  /import ZonePreviewCard/.test(mapOverlays) && /<ZonePreviewCard/.test(mapOverlays),
+  'MapOverlays must render the shared ZonePreviewCard component for /app pin clicks'
+);
+const previewStackMatch = mapOverlays.match(/id="bottom-left-map-stack"[\s\S]*?className="([^"]+)"/);
+assert.ok(previewStackMatch, 'MapOverlays bottom-left-map-stack container must exist');
+const previewStackZ = parseTailwindZIndex(previewStackMatch[1], 'MapOverlays bottom-left preview stack');
+assert.strictEqual(previewStackZ, 20, 'MapOverlays bottom-left preview stack must be at z-20');
 const secondaryToolbar = readWebappFile('components/map/SecondaryToolbar.tsx');
 const providerToolbar = readWebappFile('components/map/ProviderToolbar.tsx');
 const originalHeader = readWebappFile('components/map/OriginalHeader.tsx');

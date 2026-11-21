@@ -54,6 +54,41 @@ const hashProviderChanged = computeCanonicalHash({
 });
 assert.notStrictEqual(hash1, hashProviderChanged, 'Hash must change when provider_name changes');
 
+// Hash must support MultiLineString geometry cleanly and detect path edits
+const hashMulti1 = computeCanonicalHash({
+  ...baseRecord,
+  geometry: {
+    type: 'MultiLineString',
+    coordinates: [
+      [
+        [-114.07, 51.05],
+        [-114.071, 51.05],
+      ],
+      [
+        [-114.072, 51.051],
+        [-114.073, 51.051],
+      ],
+    ],
+  },
+});
+const hashMulti2 = computeCanonicalHash({
+  ...baseRecord,
+  geometry: {
+    type: 'MultiLineString',
+    coordinates: [
+      [
+        [-114.07, 51.05],
+        [-114.071, 51.05],
+      ],
+      [
+        [-114.072, 51.051],
+        [-114.074, 51.051],
+      ],
+    ],
+  },
+});
+assert.notStrictEqual(hashMulti1, hashMulti2, 'Hash must distinguish MultiLineString coordinate edits');
+
 console.log('  ✔ Canonical hash determinism and sensitivity verified.\n');
 
 // ----------------------------------------------------

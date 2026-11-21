@@ -54,11 +54,12 @@ export default function ZoneDetailSheet({
 }: ZoneDetailSheetProps) {
   const { user, profile, isPro } = useAuth();
   const uid = user?.uid || profile?.uid || 'demo_user';
+  const canonicalZoneKey = zone.zoneNumber || zone.id;
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [isSaved, setIsSaved] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [savedSnapshots, setSavedSnapshots] = useState<RateSnapshot[]>(() =>
-    getZoneRateSnapshots(uid, zone.id, zone.activeRate)
+    getZoneRateSnapshots(uid, canonicalZoneKey, zone.activeRate)
   );
   const [editingSnapshotId, setEditingSnapshotId] = useState<string | null>(null);
   const [editSnapPeriod, setEditSnapPeriod] = useState('');
@@ -73,12 +74,20 @@ export default function ZoneDetailSheet({
     let cancelled = false;
     getUserFavorites(uid).then((favs) => {
       if (cancelled) return;
-      setIsSaved(favs.some((f) => f.zoneId === zone.id || f.id === zone.id));
+      setIsSaved(
+        favs.some(
+          (f) =>
+            f.zoneId === zone.id ||
+            f.id === zone.id ||
+            f.zoneId === canonicalZoneKey ||
+            f.id === canonicalZoneKey
+        )
+      );
     });
     return () => {
       cancelled = true;
     };
-  }, [uid, zone.id]);
+  }, [uid, zone.id, canonicalZoneKey]);
 
   const handleSaveFavorite = async () => {
     if (!isPro && !user && !profile) {
@@ -92,8 +101,8 @@ export default function ZoneDetailSheet({
     try {
       setSaveLoading(true);
       await saveUserFavorite(uid, {
-        id: zone.id,
-        zoneId: zone.id,
+        id: canonicalZoneKey,
+        zoneId: canonicalZoneKey,
         label: zone.title,
         address: zone.address,
         hourlyRate: zone.activeRate,
@@ -137,13 +146,13 @@ export default function ZoneDetailSheet({
     };
     const next = [...savedSnapshots, nextSnapshot];
     setSavedSnapshots(next);
-    saveZoneRateSnapshots(uid, zone.id, next);
+    saveZoneRateSnapshots(uid, canonicalZoneKey, next);
   };
 
   const handleClearExampleSnapshots = () => {
     const next = savedSnapshots.filter((s) => !s.isExample);
     setSavedSnapshots(next);
-    saveZoneRateSnapshots(uid, zone.id, next, true);
+    saveZoneRateSnapshots(uid, canonicalZoneKey, next, true);
   };
 
   const startEditSnapshot = (snap: RateSnapshot) => {
@@ -168,7 +177,7 @@ export default function ZoneDetailSheet({
     const next = savedSnapshots.map((s) => (s.id === orig.id ? updatedSnap : s));
     const hasRemainingExample = next.some((s) => s.isExample);
     setSavedSnapshots(next);
-    saveZoneRateSnapshots(uid, zone.id, next, !hasRemainingExample);
+    saveZoneRateSnapshots(uid, canonicalZoneKey, next, !hasRemainingExample);
     setEditingSnapshotId(null);
   };
 
@@ -176,7 +185,7 @@ export default function ZoneDetailSheet({
     const next = savedSnapshots.filter((s) => s.id !== snap.id);
     const hasRemainingExample = next.some((s) => s.isExample);
     setSavedSnapshots(next);
-    saveZoneRateSnapshots(uid, zone.id, next, !hasRemainingExample);
+    saveZoneRateSnapshots(uid, canonicalZoneKey, next, !hasRemainingExample);
   };
 
   useEffect(() => {

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/firebase/client';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { ParkingZone, ProviderId } from '@/lib/parking/types';
+import { ParkingZone, ParkingZoneGeometry, ProviderId } from '@/lib/parking/types';
+import { getPrimaryPath, pointAlongPolyline } from '@/lib/parking/geometry';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -39,28 +40,43 @@ function tryReadFromLocalSqlite(): ParkingZone[] | null {
       sqlite.close();
 
       if (rows && rows.length > 0) {
-        return rows.map((row) => ({
-          id: String(row.external_id || row.id),
-          title: String(row.title),
-          address: String(row.address),
-          zoneNumber: String(row.external_id || ''),
-          stallCount: Number(row.stall_count),
-          stallType: String(row.stall_type),
-          brz: String(row.brz || 'None'),
-          priceZone: String(row.price_zone || 'Standard'),
-          maxStayHours: row.max_stay_hours !== null ? Number(row.max_stay_hours) : undefined,
-          enforceableHours: row.enforceable_hours ? String(row.enforceable_hours) : undefined,
-          activeRate: Number(row.active_rate),
-          isCurrentlyFree: Boolean(row.is_currently_free),
-          rateSchedule: row.rate_schedule_json ? JSON.parse(String(row.rate_schedule_json)) : [],
-          coordinates: [Number(row.coordinates_lng), Number(row.coordinates_lat)],
-          geometry: row.geometry_json ? JSON.parse(String(row.geometry_json)) : undefined,
-          provider: (row.provider_id as ProviderId) || mapProviderNameToId(String(row.provider_name)),
-          provider_name: String(row.provider_name),
-          restrictions: row.restrictions_json ? JSON.parse(String(row.restrictions_json)) : [],
-          paymentApp: row.payment_app ? String(row.payment_app) : undefined,
-          paymentUrl: row.payment_url ? String(row.payment_url) : undefined,
-        }));
+        return rows.map((row) => {
+          const geometry = row.geometry_json
+            ? (JSON.parse(String(row.geometry_json)) as ParkingZoneGeometry)
+            : undefined;
+          const primaryPath = getPrimaryPath(geometry);
+          const storedCoords: [number, number] = [
+            Number(row.coordinates_lng),
+            Number(row.coordinates_lat),
+          ];
+          const coordinates =
+            primaryPath && primaryPath.length >= 2
+              ? pointAlongPolyline(primaryPath, 0.5)
+              : storedCoords;
+
+          return {
+            id: String(row.id || row.external_id),
+            title: String(row.title),
+            address: String(row.address),
+            zoneNumber: String(row.external_id || ''),
+            stallCount: Number(row.stall_count),
+            stallType: String(row.stall_type),
+            brz: String(row.brz || 'None'),
+            priceZone: String(row.price_zone || 'Standard'),
+            maxStayHours: row.max_stay_hours !== null ? Number(row.max_stay_hours) : undefined,
+            enforceableHours: row.enforceable_hours ? String(row.enforceable_hours) : undefined,
+            activeRate: Number(row.active_rate),
+            isCurrentlyFree: Boolean(row.is_currently_free),
+            rateSchedule: row.rate_schedule_json ? JSON.parse(String(row.rate_schedule_json)) : [],
+            coordinates,
+            geometry,
+            provider: (row.provider_id as ProviderId) || mapProviderNameToId(String(row.provider_name)),
+            provider_name: String(row.provider_name),
+            restrictions: row.restrictions_json ? JSON.parse(String(row.restrictions_json)) : [],
+            paymentApp: row.payment_app ? String(row.payment_app) : undefined,
+            paymentUrl: row.payment_url ? String(row.payment_url) : undefined,
+          };
+        });
       }
     }
   } catch (err) {
@@ -88,8 +104,16 @@ export async function GET(request: Request) {
         snap.forEach((docSnap) => {
           const data = docSnap.data();
           const providerName = data.provider_name || 'MyParking';
+          const geometry = data.geometry as ParkingZoneGeometry | undefined;
+          const primaryPath = getPrimaryPath(geometry);
+          const storedCoords: [number, number] = data.coordinates || [0, 0];
+          const coordinates =
+            primaryPath && primaryPath.length >= 2
+              ? pointAlongPolyline(primaryPath, 0.5)
+              : storedCoords;
+
           zones.push({
-            id: String(data.externalId || docSnap.id),
+            id: docSnap.id,
             title: String(data.title || `Zone #${data.externalId || docSnap.id}`),
             address: String(data.address || 'Calgary, AB'),
             zoneNumber: String(data.externalId || ''),
@@ -102,8 +126,8 @@ export async function GET(request: Request) {
             activeRate: Number(data.activeRate || 0),
             isCurrentlyFree: Boolean(data.isCurrentlyFree),
             rateSchedule: data.rateSchedule || [],
-            coordinates: data.coordinates || [0, 0],
-            geometry: data.geometry,
+            coordinates,
+            geometry,
             provider: (data.providerId as ProviderId) || mapProviderNameToId(providerName),
             provider_name: providerName,
             restrictions: data.restrictions || [],

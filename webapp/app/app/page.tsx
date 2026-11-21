@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import OriginalHeader from '@/components/map/OriginalHeader';
 import SecondaryToolbar from '@/components/map/SecondaryToolbar';
@@ -28,6 +28,7 @@ import {
   BasemapId,
 } from '@/lib/parking/types';
 import {
+  CACHE_KEY,
   fetchCalgaryParkingZones,
   getLastDataFetchTime,
   SAMPLE_CALGARY_ZONES,
@@ -64,7 +65,7 @@ function calculateHaversineMeters(
 function getInitialZones(): ParkingZone[] {
   if (typeof window !== 'undefined') {
     try {
-      const raw = sessionStorage.getItem('yyc_parking_zones_v2');
+      const raw = sessionStorage.getItem(CACHE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed.zones && Array.isArray(parsed.zones) && parsed.zones.length > 0) {
@@ -122,7 +123,14 @@ export default function MapAppPage() {
   const [showBestValuePanel, setShowBestValuePanel] = useState(true);
 
   // Modals & Panels
-  const [selectedZone, setSelectedZone] = useState<ParkingZone | null>(null);
+  const deepLinkZoneHandledRef = useRef(false);
+  const [selectedZone, setSelectedZone] = useState<ParkingZone | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const zoneId = new URLSearchParams(window.location.search).get('zone');
+    if (!zoneId) return null;
+    return getInitialZones().find((z) => z.id === zoneId || z.zoneNumber === zoneId) || null;
+  });
+  const [previewZone, setPreviewZone] = useState<ParkingZone | null>(null);
   const [showLocationsDialog, setShowLocationsDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [alarmZone, setAlarmZone] = useState<ParkingZone | null>(null);
@@ -142,6 +150,16 @@ export default function MapAppPage() {
         if (mounted) {
           setAllZones(data);
           setLastUpdated(getLastDataFetchTime());
+          if (!deepLinkZoneHandledRef.current && typeof window !== 'undefined') {
+            deepLinkZoneHandledRef.current = true;
+            const zoneId = new URLSearchParams(window.location.search).get('zone');
+            if (zoneId) {
+              const match = data.find((z) => z.id === zoneId || z.zoneNumber === zoneId);
+              if (match) {
+                setSelectedZone((prev) => prev ?? match);
+              }
+            }
+          }
         }
       })
       .catch((err) => {
@@ -152,6 +170,18 @@ export default function MapAppPage() {
       mounted = false;
     };
   }, []);
+
+  // Dismiss zone preview card on Escape when details sheet is closed
+  useEffect(() => {
+    if (!previewZone || selectedZone) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPreviewZone(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewZone, selectedZone]);
 
   // Theme synchronization
   const handleToggleTheme = () => {
@@ -232,6 +262,7 @@ export default function MapAppPage() {
     setActiveLocationId('NONE');
     setMaxRadius(500);
     setSortMode('closest_cheapest');
+    setPreviewZone(null);
     handleSelectAllProviders();
   };
 
@@ -332,6 +363,7 @@ export default function MapAppPage() {
       result = result.filter(
         (zone) =>
           zone.id.toLowerCase().includes(q) ||
+          (zone.zoneNumber || '').toLowerCase().includes(q) ||
           zone.title.toLowerCase().includes(q) ||
           zone.address.toLowerCase().includes(q)
       );
@@ -441,7 +473,12 @@ export default function MapAppPage() {
         <MapLibreView
           zones={filteredZones}
           selectedZone={selectedZone}
-          onSelectZone={(z) => setSelectedZone(z)}
+          onSelectZone={(z) => {
+            setPreviewZone(null);
+            setSelectedZone(z);
+          }}
+          previewZone={selectedZone ? null : previewZone}
+          onPreviewZone={(z) => setPreviewZone(z)}
           basemap={basemap}
           showPins={showPins}
           showShapes={showShapes}
@@ -459,7 +496,7 @@ export default function MapAppPage() {
           }
         />
 
-        {/* Map Overlays (Status, Zone Count, Legend, Best Value, Controls) */}
+        {/* Map Overlays (Status, Zone Count, Legend, Best Value, Preview Card, Controls) */}
         <MapOverlays
           totalZonesCount={allZones.length}
           filteredZonesCount={filteredZones.length}
@@ -477,7 +514,20 @@ export default function MapAppPage() {
           showBestValuePanel={showBestValuePanel}
           onCloseBestValuePanel={() => setShowBestValuePanel(false)}
           bestValueZones={filteredZones}
-          onSelectZone={(z) => setSelectedZone(z)}
+          onSelectZone={(z) => {
+            setPreviewZone(null);
+            setSelectedZone(z);
+          }}
+          previewZone={
+            selectedZone || !previewZone
+              ? null
+              : filteredZones.find((z) => z.id === previewZone.id) || previewZone
+          }
+          onInspectZone={(z) => {
+            setPreviewZone(null);
+            setSelectedZone(z);
+          }}
+          onClosePreviewZone={() => setPreviewZone(null)}
           isRefreshing={isRefreshing}
         />
 

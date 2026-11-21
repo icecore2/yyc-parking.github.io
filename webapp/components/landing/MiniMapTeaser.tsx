@@ -1,11 +1,13 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Map, Marker, NavigationControl, config } from 'maplibre-gl';
+import { GeoJSONSource, Map, Marker, NavigationControl, config } from 'maplibre-gl';
 import { SAMPLE_CALGARY_ZONES } from '@/lib/parking/data-service';
 import { ParkingZone } from '@/lib/parking/types';
+import { resolvePinAnchorCoordinates } from '@/lib/parking/geometry';
 import { ExternalLink } from 'lucide-react';
 import Link from 'next/link';
+import ZonePreviewCard from '@/components/map/ZonePreviewCard';
 
 if (typeof window !== 'undefined' && !config.WORKER_URL) {
   config.WORKER_URL = '/maplibre-gl-worker.mjs';
@@ -15,8 +17,17 @@ export default function MiniMapTeaser() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<Map | null>(null);
+  const markerElementsRef = useRef<Record<string, HTMLDivElement>>({});
+  const anchorMapRef = useRef<globalThis.Map<string, [number, number]>>(new globalThis.Map());
+  const selectedZoneRef = useRef<ParkingZone | null>(SAMPLE_CALGARY_ZONES[1]);
+  const styleReadyRef = useRef(false);
   const [isInView, setIsInView] = useState(false);
+  const [mapStyleReady, setMapStyleReady] = useState(false);
   const [selectedZone, setSelectedZone] = useState<ParkingZone | null>(SAMPLE_CALGARY_ZONES[1]);
+
+  useEffect(() => {
+    selectedZoneRef.current = selectedZone;
+  }, [selectedZone]);
 
   // Defer heavy WebGL canvas initialization until user scrolls near the preview section
   useEffect(() => {
@@ -69,10 +80,139 @@ export default function MiniMapTeaser() {
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right');
 
     map.on('load', () => {
-      // Add authentic teardrop branded pin markers for sample downtown spots
+      const anchorMap = resolvePinAnchorCoordinates(SAMPLE_CALGARY_ZONES);
+      anchorMapRef.current = anchorMap;
+
+      const lineFeatures = SAMPLE_CALGARY_ZONES
+        .filter((z) => Boolean(z.geometry && z.geometry.coordinates && z.geometry.coordinates.length > 0))
+        .map((z) => {
+          const color = z.isCurrentlyFree ? '#059669' : z.activeRate >= 4 ? '#e11d48' : '#2563eb';
+          return {
+            type: 'Feature' as const,
+            properties: {
+              id: z.id,
+              title: z.title,
+              color,
+            },
+            geometry: z.geometry!,
+          };
+        });
+
+      const initialZone = selectedZoneRef.current;
+      const initialId = initialZone?.id || '';
+      const initialCoord = initialZone
+        ? anchorMap.get(initialZone.id) || initialZone.coordinates
+        : null;
+
+      map.addSource('parking-lines-source', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: lineFeatures,
+        },
+      });
+
+      map.addLayer({
+        id: 'parking-lines-layer',
+        type: 'line',
+        source: 'parking-lines-source',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round',
+        },
+        paint: {
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 7],
+          'line-color': ['get', 'color'],
+          'line-opacity': 0.85,
+        },
+      });
+
+      map.addLayer({
+        id: 'parking-selected-line-glow',
+        type: 'line',
+        source: 'parking-lines-source',
+        filter: ['==', ['get', 'id'], initialId],
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round',
+        },
+        paint: {
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 10, 16, 18, 18, 22],
+          'line-color': '#f59e0b',
+          'line-opacity': 0.35,
+          'line-blur': 3,
+        },
+      });
+
+      map.addLayer({
+        id: 'parking-selected-line-layer',
+        type: 'line',
+        source: 'parking-lines-source',
+        filter: ['==', ['get', 'id'], initialId],
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round',
+        },
+        paint: {
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 6, 16, 11, 18, 14],
+          'line-color': '#f59e0b',
+          'line-opacity': 1,
+        },
+      });
+
+      map.addSource('parking-selected-anchor-source', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: initialCoord
+            ? [
+                {
+                  type: 'Feature',
+                  properties: { id: initialId },
+                  geometry: { type: 'Point', coordinates: initialCoord },
+                },
+              ]
+            : [],
+        },
+      });
+
+      map.addLayer({
+        id: 'parking-selected-anchor-layer',
+        type: 'circle',
+        source: 'parking-selected-anchor-source',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 4, 16, 6],
+          'circle-color': '#f59e0b',
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ffffff',
+          'circle-opacity': 1,
+        },
+      });
+
+      const handleLineClick = (e: { features?: { properties?: { id?: string } }[] }) => {
+        const featId = e.features?.[0]?.properties?.id;
+        const match = SAMPLE_CALGARY_ZONES.find((z) => z.id === featId);
+        if (match) {
+          setSelectedZone(match);
+          const coord = anchorMap.get(match.id) || match.coordinates;
+          map.flyTo({ center: coord, zoom: 15.5, speed: 1.2 });
+        }
+      };
+
+      map.on('click', 'parking-lines-layer', handleLineClick);
+      map.on('click', 'parking-selected-line-layer', handleLineClick);
+      map.on('mouseenter', 'parking-lines-layer', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'parking-lines-layer', () => {
+        map.getCanvas().style.cursor = '';
+      });
+
+      // Add authentic teardrop branded pin markers anchored by exact sharp tip on each stalls bar
       SAMPLE_CALGARY_ZONES.forEach((zone) => {
         const el = document.createElement('div');
         el.className = 'custom-pin-marker';
+        el.dataset.zoneId = zone.id;
         el.title = `${zone.title} - ${zone.address}`;
 
         const isFree = zone.isCurrentlyFree;
@@ -88,26 +228,83 @@ export default function MiniMapTeaser() {
           ? '<span>FREE</span>'
           : `<span>$${zone.activeRate.toFixed(0)}</span>`;
         bubble.appendChild(logoDiv);
-        el.appendChild(bubble);
 
-        el.addEventListener('click', () => {
+        bubble.addEventListener('click', (ev) => {
+          ev.stopPropagation();
           setSelectedZone(zone);
-          map.flyTo({ center: zone.coordinates, zoom: 15.5, speed: 1.2 });
+          const coord = anchorMap.get(zone.id) || zone.coordinates;
+          map.flyTo({ center: coord, zoom: 15.5, speed: 1.2 });
         });
 
-        new Marker({ element: el })
-          .setLngLat(zone.coordinates)
+        el.appendChild(bubble);
+        markerElementsRef.current[zone.id] = el;
+
+        const anchorCoord = anchorMap.get(zone.id) || zone.coordinates;
+        new Marker({ element: el, anchor: 'bottom' })
+          .setLngLat(anchorCoord)
           .addTo(map);
       });
+
+      if (initialId) {
+        markerElementsRef.current[initialId]?.classList.add('pin-active');
+      }
+
+      styleReadyRef.current = true;
+      setMapStyleReady(true);
     });
 
     mapInstance.current = map;
 
     return () => {
+      styleReadyRef.current = false;
+      markerElementsRef.current = {};
       map.remove();
       mapInstance.current = null;
     };
   }, [isInView]);
+
+  useEffect(() => {
+    Object.entries(markerElementsRef.current).forEach(([id, el]) => {
+      if (id === selectedZone?.id) {
+        el.classList.add('pin-active');
+      } else {
+        el.classList.remove('pin-active');
+      }
+    });
+
+    const map = mapInstance.current;
+    if (!map || !styleReadyRef.current) return;
+
+    const targetId = selectedZone?.id || '';
+    const filterExpr = ['==', ['get', 'id'], targetId] as ['==', ['get', string], string];
+    if (map.getLayer('parking-selected-line-glow')) {
+      map.setFilter('parking-selected-line-glow', filterExpr);
+    }
+    if (map.getLayer('parking-selected-line-layer')) {
+      map.setFilter('parking-selected-line-layer', filterExpr);
+    }
+    const anchorSource = map.getSource('parking-selected-anchor-source') as
+      | GeoJSONSource
+      | undefined;
+    if (anchorSource) {
+      if (selectedZone) {
+        const anchorCoord =
+          anchorMapRef.current.get(selectedZone.id) || selectedZone.coordinates;
+        anchorSource.setData({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: { id: selectedZone.id },
+              geometry: { type: 'Point', coordinates: anchorCoord },
+            },
+          ],
+        });
+      } else {
+        anchorSource.setData({ type: 'FeatureCollection', features: [] });
+      }
+    }
+  }, [selectedZone, mapStyleReady]);
 
   return (
     <div ref={wrapperRef} className="relative w-full rounded-3xl border border-border bg-card shadow-2xl overflow-hidden">
@@ -132,32 +329,11 @@ export default function MiniMapTeaser() {
 
         {/* Selected Zone Float Sheet */}
         {selectedZone && (
-          <div className="absolute bottom-4 left-4 right-4 sm:right-auto sm:max-w-sm z-10 rounded-2xl border border-border bg-card/95 p-4 shadow-xl backdrop-blur-md animate-in slide-in-from-bottom-2 duration-200">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-sm text-foreground">{selectedZone.title}</span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
-                    {selectedZone.isCurrentlyFree ? 'FREE NOW' : `$${selectedZone.activeRate.toFixed(2)}/hr`}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5">{selectedZone.address}</p>
-              </div>
-              <div className="text-right shrink-0">
-                <span className="text-[10px] font-medium text-muted-foreground block">{selectedZone.brz}</span>
-                <span className="text-[10px] text-slate-500 font-semibold">{selectedZone.stallCount} stalls</span>
-              </div>
-            </div>
-
-            <div className="mt-3 pt-2.5 border-t border-border flex items-center justify-between text-xs">
-              <span className="text-muted-foreground text-[11px]">{selectedZone.enforceableHours}</span>
-              <Link
-                href={`/app?zone=${selectedZone.id}`}
-                className="font-semibold text-emerald-600 dark:text-emerald-400 hover:underline text-[11px]"
-              >
-                Inspect Zone →
-              </Link>
-            </div>
+          <div className="absolute bottom-4 left-4 right-4 sm:right-auto sm:max-w-sm z-10">
+            <ZonePreviewCard
+              zone={selectedZone}
+              inspectHref={`/app?zone=${selectedZone.id}`}
+            />
           </div>
         )}
       </div>

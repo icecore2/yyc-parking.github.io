@@ -31,6 +31,7 @@ function stableStringify(obj: unknown): string {
 export function computeCanonicalHash(
   record: Partial<NormalizedParkingRecord> | Record<string, unknown>
 ): string {
+  const geom = record.geometry as NormalizedParkingRecord['geometry'] | undefined | null;
   const canonicalRepresentation = {
     id: String(record.id || ''),
     provider_name: String(record.provider_name || ''),
@@ -57,16 +58,30 @@ export function computeCanonicalHash(
           Number(Number(record.coordinates[1] || 0).toFixed(6)),
         ]
       : [0, 0],
-    geometry: record.geometry
-      ? {
-          type: 'LineString',
-          coordinates: Array.isArray((record.geometry as { coordinates?: [number, number][] }).coordinates)
-            ? (record.geometry as { coordinates: [number, number][] }).coordinates.map((pt) => [
-                Number(Number(pt[0]).toFixed(6)),
-                Number(Number(pt[1]).toFixed(6)),
-              ])
-            : [],
-        }
+    geometry: geom
+      ? geom.type === 'MultiLineString'
+        ? {
+            type: 'MultiLineString',
+            coordinates: Array.isArray(geom.coordinates)
+              ? geom.coordinates.map((path) =>
+                  Array.isArray(path)
+                    ? path.map((pt) => [
+                        Number(Number(pt[0]).toFixed(6)),
+                        Number(Number(pt[1]).toFixed(6)),
+                      ])
+                    : []
+                )
+              : [],
+          }
+        : {
+            type: 'LineString',
+            coordinates: Array.isArray(geom.coordinates)
+              ? geom.coordinates.map((pt) => [
+                  Number(Number(pt[0]).toFixed(6)),
+                  Number(Number(pt[1]).toFixed(6)),
+                ])
+              : [],
+          }
       : null,
     restrictions: Array.isArray(record.restrictions)
       ? [...record.restrictions].map((r) => String(r).trim()).sort()

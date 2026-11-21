@@ -18,6 +18,63 @@ interface ArcGISResponse {
 export const CPA_ARCGIS_URL =
   'https://services1.arcgis.com/AVP60cs0Q9PEA8rH/arcgis/rest/services/Calgary_Parking_Authority_On_Street_Parking_Zones_with_Rates/FeatureServer/0/query?where=1%3D1&outFields=*&resultRecordCount=2000&f=json';
 
+const CALGARY_COS_LAT = Math.cos((51.0447 * Math.PI) / 180);
+const METERS_PER_DEG_LAT = 111320;
+const METERS_PER_DEG_LNG = METERS_PER_DEG_LAT * CALGARY_COS_LAT;
+
+function polylineLengthMeters(coords: [number, number][]): number {
+  let total = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const dx = (coords[i + 1][0] - coords[i][0]) * METERS_PER_DEG_LNG;
+    const dy = (coords[i + 1][1] - coords[i][1]) * METERS_PER_DEG_LAT;
+    total += Math.hypot(dx, dy);
+  }
+  return total;
+}
+
+function getLongestPath(paths: [number, number][][]): [number, number][] {
+  let best = paths[0];
+  let bestLen = -1;
+  for (const path of paths) {
+    if (!path || path.length === 0) continue;
+    const len = polylineLengthMeters(path);
+    if (len > bestLen) {
+      bestLen = len;
+      best = path;
+    }
+  }
+  return best;
+}
+
+function computeArcLengthMidpoint(coords: [number, number][]): [number, number] {
+  if (!coords || coords.length === 0) return [0, 0];
+  if (coords.length === 1) return coords[0];
+  const segLengths: number[] = [];
+  let total = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const dx = (coords[i + 1][0] - coords[i][0]) * METERS_PER_DEG_LNG;
+    const dy = (coords[i + 1][1] - coords[i][1]) * METERS_PER_DEG_LAT;
+    const len = Math.hypot(dx, dy);
+    segLengths.push(len);
+    total += len;
+  }
+  if (total === 0) return coords[0];
+  const half = total / 2;
+  let acc = 0;
+  for (let i = 0; i < segLengths.length; i++) {
+    const segLen = segLengths[i];
+    if (acc + segLen >= half && segLen > 0) {
+      const t = (half - acc) / segLen;
+      return [
+        Number((coords[i][0] + t * (coords[i + 1][0] - coords[i][0])).toFixed(6)),
+        Number((coords[i][1] + t * (coords[i + 1][1] - coords[i][1])).toFixed(6)),
+      ];
+    }
+    acc += segLen;
+  }
+  return coords[coords.length - 1];
+}
+
 export class MyParkingFetcher extends BaseProviderFetcher {
   readonly providerName: ProviderName = 'MyParking';
   readonly providerId = 'parkplus_on_street';
@@ -49,12 +106,17 @@ export class MyParkingFetcher extends BaseProviderFetcher {
 
         const paths = geom.paths;
         if (!paths || paths.length === 0) continue;
-        const subPath = paths[0];
-        if (!subPath || subPath.length === 0) continue;
+        const wgsPaths: [number, number][][] = paths
+          .filter((p) => Array.isArray(p) && p.length > 0)
+          .map((p) => p.map((pt) => toWgs84(pt[0], pt[1])));
+        if (wgsPaths.length === 0) continue;
 
-        const wgsPath: [number, number][] = subPath.map((pt) => toWgs84(pt[0], pt[1]));
-        const midIdx = Math.floor(wgsPath.length / 2);
-        const midpoint = wgsPath[midIdx] || wgsPath[0];
+        const geometry: NormalizedParkingRecord['geometry'] =
+          wgsPaths.length === 1
+            ? { type: 'LineString', coordinates: wgsPaths[0] }
+            : { type: 'MultiLineString', coordinates: wgsPaths };
+        const primaryPath = getLongestPath(wgsPaths);
+        const midpoint = computeArcLengthMidpoint(primaryPath);
 
         const objectId = attrs.OBJECTID ? String(attrs.OBJECTID).trim() : '';
         const zoneNumber = attrs.PARKING_ZONE ? String(attrs.PARKING_ZONE).trim() : objectId;
@@ -94,10 +156,7 @@ export class MyParkingFetcher extends BaseProviderFetcher {
           isCurrentlyFree,
           rateSchedule: periods,
           coordinates: midpoint,
-          geometry: {
-            type: 'LineString',
-            coordinates: wgsPath,
-          },
+          geometry,
           restrictions,
           paymentApp: 'ParkPlus (MyParking)',
           paymentUrl: 'https://www.calgaryparking.com/parkplus',
