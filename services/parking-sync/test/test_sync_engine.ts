@@ -8,7 +8,7 @@ import { MyParkingFetcher } from '../src/fetchers/myparking.ts';
 import { ParkadeFetcher } from '../src/fetchers/parkade.ts';
 import { ImparkFetcher } from '../src/fetchers/impark.ts';
 import { TransitFetcher, IndigoFetcher, PreciseParkLinkFetcher } from '../src/fetchers/transit-and-commercial.ts';
-import { parseHtmlRates, parseRateHeader } from '../src/utils/rate-parser.ts';
+import { enforceableWindowFor, parseHtmlRates, parseRateHeader } from '../src/utils/rate-parser.ts';
 import type { NormalizedParkingRecord } from '../src/types.ts';
 
 console.log('🧪 Starting Comprehensive Parking Sync & Push Engine Tests...\n');
@@ -311,6 +311,36 @@ assert.deepStrictEqual(parseRateHeader('Mon-Sun 9:00 to 18:00'), { days: 'Daily'
 const loadingOnly = parseHtmlRates('<b>Loading zone:</b><br><br>Commercial vehicles 30 min<br><br>');
 assert.deepStrictEqual(loadingOnly.periods, []);
 assert.strictEqual(loadingOnly.activeRate, 0);
+
+// Priced day-only headers (parkplus_67) take their window from ENFORCEABLE_TIME
+const PARKPLUS_67_HTML = '<b>Weekdays: Max 9 Hours</b><br><br>$1.25 per hour:Max $10.25<br><br><b>Saturday: Max 9 Hours</b><br><br>$0.50 per hour:Max $1.25<br><br><b>Sunday/Holidays:</b><br><br>Free parking<br><br><b>Free parking to 9AM</b><br><br>See Signs /Parking Restrictions<br><br>';
+const p67 = parseHtmlRates(PARKPLUS_67_HTML, '0910-1750 MON-SAT');
+assert.deepStrictEqual(p67.periods, [
+  { days: 'Mon-Fri', startTime: '09:10', endTime: '17:50', ratePerHour: 1.25, isFree: false },
+  { days: 'Saturday', startTime: '09:10', endTime: '17:50', ratePerHour: 0.5, isFree: false },
+  { days: 'Sunday', startTime: '00:00', endTime: '23:59', ratePerHour: 0, isFree: true },
+]);
+assert.strictEqual(p67.activeRate, 1.25);
+assert.strictEqual(p67.isCurrentlyFree, false);
+assert.deepStrictEqual(enforceableWindowFor('1110-1520 MON-FRI, 0910-1750 SAT', 'Saturday'), { startTime: '09:10', endTime: '17:50' });
+assert.deepStrictEqual(enforceableWindowFor('1110-1520 MON-FRI, 0910-1750 SAT', 'Mon-Fri'), { startTime: '11:10', endTime: '15:20' });
+assert.deepStrictEqual(enforceableWindowFor('0910-1750 MON-FRI', 'Saturday'), { startTime: '09:10', endTime: '17:50' });
+assert.deepStrictEqual(enforceableWindowFor(undefined, 'Mon-Fri'), { startTime: '09:00', endTime: '18:00' });
+assert.deepStrictEqual(enforceableWindowFor('24/7', 'Mon-Fri'), { startTime: '09:00', endTime: '18:00' });
+// Non-priced day-only headers are still dropped
+assert.deepStrictEqual(parseHtmlRates('<b>Saturday: Max 9 Hours</b><br><br>See Signs<br><br>', '0910-1750 MON-SAT').periods, []);
+assert.deepStrictEqual(parseHtmlRates('<b>Free parking to 9 AM</b><br><br>See Signs /Parking Restrictions<br><br>', '0910-1750 MON-SAT').periods, []);
+assert.deepStrictEqual(parseHtmlRates('<b>Loading zone:</b><br><br>Commercial vehicles 30 min<br><br>', '0910-1750 MON-SAT').periods, []);
+
+// Price extraction: no "$", "$.50", and per-sub-hour prices scaled to hourly
+const rateOf = (value: string) => parseHtmlRates(`<b>Mon-Fri 9:00 AM to 6:00 PM</b><br><br>${value}<br><br>`).periods[0]?.ratePerHour;
+assert.strictEqual(rateOf('1.00 per Hour'), 1);
+assert.strictEqual(rateOf('$.50 per 30 Min'), 1);
+assert.strictEqual(rateOf('$2.00 each 30 Min'), 4);
+assert.strictEqual(rateOf('$0.50 per 1/2 hour'), 1);
+assert.strictEqual(rateOf('$0.50 per 15 Min'), 2);
+assert.strictEqual(rateOf('$1.00 per Hour Max: 30 Min'), 1);
+assert.strictEqual(rateOf('$1.25 per hour:Max $10.25'), 1.25);
 
 console.log('  ✔ ParkPlus headers parse days/times; non-rate pairs are dropped.\n');
 

@@ -412,7 +412,8 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
       const midpoint = pointAlongPolyline(primaryPath, 0.5);
 
       const htmlRates = attrs.HTML_ZONE_RATE ? String(attrs.HTML_ZONE_RATE) : '';
-      const { periods } = parseRateSchedule(htmlRates);
+      const enforceableTime = attrs.ENFORCEABLE_TIME ? String(attrs.ENFORCEABLE_TIME).trim() : undefined;
+      const { periods } = parseRateSchedule(htmlRates, enforceableTime);
 
       const objectId =
         attrs.OBJECTID !== undefined && attrs.OBJECTID !== null
@@ -445,7 +446,7 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
         brz: attrs.BRZ_NAME ? String(attrs.BRZ_NAME).trim() : 'None',
         priceZone: attrs.PRICE_ZONE ? String(attrs.PRICE_ZONE).trim() : 'Standard',
         maxStayHours: attrs.MAX_TIME ? Number(attrs.MAX_TIME) : undefined,
-        enforceableHours: attrs.ENFORCEABLE_TIME ? String(attrs.ENFORCEABLE_TIME).trim() : undefined,
+        enforceableHours: enforceableTime,
         rateSchedule: periods,
         // Resolved at Calgary time by withLiveRates on every return path.
         activeRate: 0,

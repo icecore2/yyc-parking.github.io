@@ -73,6 +73,35 @@ if (!process.execArgv.includes('--experimental-strip-types') && !process.feature
   assert.deepStrictEqual(parsed.periods[5], { days: 'Sunday', startTime: '00:00', endTime: '23:59', ratePerHour: 0, isFree: true });
   assert.strictEqual(parser.parseRateHeader('Mon-Sun 8:00 AM to 6:00 PM').days, 'Daily');
 
+  // F1: priced day-only headers (real parkplus_67 row) take their window from ENFORCEABLE_TIME
+  const PARKPLUS_67_HTML = '<b>Weekdays: Max 9 Hours</b><br><br>$1.25 per hour:Max $10.25<br><br><b>Saturday: Max 9 Hours</b><br><br>$0.50 per hour:Max $1.25<br><br><b>Sunday/Holidays:</b><br><br>Free parking<br><br><b>Free parking to 9AM</b><br><br>See Signs /Parking Restrictions<br><br>';
+  const p67 = parser.parseRateSchedule(PARKPLUS_67_HTML, '0910-1750 MON-SAT');
+  assert.deepStrictEqual(p67.periods, [
+    { days: 'Mon-Fri', startTime: '09:10', endTime: '17:50', ratePerHour: 1.25, isFree: false },
+    { days: 'Saturday', startTime: '09:10', endTime: '17:50', ratePerHour: 0.5, isFree: false },
+    { days: 'Sunday', startTime: '00:00', endTime: '23:59', ratePerHour: 0, isFree: true },
+  ]);
+  assert.strictEqual(p67.maxRate, 1.25);
+  assert.strictEqual(rs.resolveRateAt(p67.periods, at(3, 12)).rate, 1.25);
+  assert.deepStrictEqual(parser.enforceableWindowFor('1110-1520 MON-FRI, 0910-1750 SAT', 'Saturday'), { startTime: '09:10', endTime: '17:50' });
+  assert.deepStrictEqual(parser.enforceableWindowFor('1110-1520 MON-FRI, 0910-1750 SAT', 'Mon-Fri'), { startTime: '11:10', endTime: '15:20' });
+  assert.deepStrictEqual(parser.enforceableWindowFor('0910-1750 MON-FRI', 'Saturday'), { startTime: '09:10', endTime: '17:50' });
+  assert.deepStrictEqual(parser.enforceableWindowFor(undefined, 'Mon-Fri'), { startTime: '09:00', endTime: '18:00' });
+  assert.deepStrictEqual(parser.enforceableWindowFor('24/7', 'Mon-Fri'), { startTime: '09:00', endTime: '18:00' });
+  assert.deepStrictEqual(parser.parseRateSchedule('<b>Saturday: Max 9 Hours</b><br><br>See Signs<br><br>', '0910-1750 MON-SAT').periods, []);
+  assert.deepStrictEqual(parser.parseRateSchedule('<b>Free parking to 9 AM</b><br><br>See Signs /Parking Restrictions<br><br>', '0910-1750 MON-SAT').periods, []);
+  assert.deepStrictEqual(parser.parseRateSchedule('<b>Loading zone:</b><br><br>Commercial vehicles 30 min<br><br>', '0910-1750 MON-SAT').periods, []);
+
+  // F4: price extraction without "$", "$.50", and per-sub-hour prices scaled to hourly
+  const rateOf = (value) => parser.parseRateSchedule(`<b>Mon-Fri 9:00 AM to 6:00 PM</b><br><br>${value}<br><br>`).periods[0]?.ratePerHour;
+  assert.strictEqual(rateOf('1.00 per Hour'), 1);
+  assert.strictEqual(rateOf('$.50 per 30 Min'), 1);
+  assert.strictEqual(rateOf('$2.00 each 30 Min'), 4);
+  assert.strictEqual(rateOf('$0.50 per 1/2 hour'), 1);
+  assert.strictEqual(rateOf('$0.50 per 15 Min'), 2);
+  assert.strictEqual(rateOf('$1.00 per Hour Max: 30 Min'), 1);
+  assert.strictEqual(rateOf('$1.25 per hour:Max $10.25'), 1.25);
+
   const fs = require('fs');
   const src = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
   const sheet = src('components/map/ZoneDetailSheet.tsx');
@@ -82,6 +111,10 @@ if (!process.execArgv.includes('--experimental-strip-types') && !process.feature
   assert.ok(/<RateCurveChart[^>]*schedule=\{zone\.rateSchedule\}/.test(sheet));
   assert.ok(/resolveRateAt\(/.test(src('components/map/ZonePreviewCard.tsx')));
   assert.ok(/withLiveRates\(/.test(src('lib/parking/data-service.ts')));
+
+  // F1 wiring: the ArcGIS branch passes ENFORCEABLE_TIME to the parser
+  const dataService = src('lib/parking/data-service.ts');
+  assert.ok(/enforceableTime = attrs\.ENFORCEABLE_TIME/.test(dataService) && /parseRateSchedule\(htmlRates, enforceableTime\)/.test(dataService), 'ArcGIS branch passes ENFORCEABLE_TIME');
 
   console.log('✓ rate-schedule: all assertions passed');
 })().catch((err) => { console.error(err); process.exit(1); });

@@ -124,7 +124,8 @@ export class MyParkingFetcher extends BaseProviderFetcher {
 
         const id = objectId ? `parkplus_${objectId}` : `parkplus_z${zoneNumber}`;
         const htmlRates = attrs.HTML_ZONE_RATE ? String(attrs.HTML_ZONE_RATE) : '';
-        const { activeRate, isCurrentlyFree, periods } = parseHtmlRates(htmlRates);
+        const enforceableTime = attrs.ENFORCEABLE_TIME ? String(attrs.ENFORCEABLE_TIME).trim() : undefined;
+        const { activeRate, isCurrentlyFree, periods } = parseHtmlRates(htmlRates, enforceableTime);
 
         const restrictions: string[] = [];
         if (attrs.NO_PARKING) restrictions.push(`No Parking: ${attrs.NO_PARKING}`);
