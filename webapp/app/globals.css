@@ -149,6 +149,7 @@ select option {
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+  contain: layout style;
   z-index: 1;
 }
 
@@ -236,6 +237,7 @@ select option {
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+  contain: layout style;
   z-index: 2;
 }
 
@@ -259,7 +261,6 @@ select option {
   cursor: pointer;
   pointer-events: auto;
   transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.18s ease;
-  animation: pin-cluster-in 0.22s ease-out;
 }
 
 /* Inner disc sits on top of the conic ring, leaving a 4px provider band */
@@ -308,20 +309,8 @@ select option {
   color: #a7f3d0;
 }
 
-@keyframes pin-cluster-in {
-  from {
-    transform: scale(0.6);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .pin-cluster {
-    animation: none;
     transition: none;
   }
 }

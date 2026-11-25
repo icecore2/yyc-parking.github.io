@@ -130,6 +130,15 @@ assert.ok(/cluster:\s*true/.test(view), 'Pin source must enable clustering');
 assert.ok(/clusterMaxZoom:\s*PIN_CLUSTER_MAX_ZOOM/.test(view), 'Pin source must use shared clusterMaxZoom');
 assert.ok(/clusterProperties:\s*buildClusterProperties\(\)/.test(view), 'Pin source must aggregate provider/rate stats');
 assert.ok(/querySourceFeatures\(PIN_SOURCE_ID\)/.test(view), 'Markers must be built only for features in loaded viewport tiles');
+// Flicker regression: a loading source must keep the current markers, not clear them
+assert.ok(
+  /if \(!map\.isSourceLoaded\(PIN_SOURCE_ID\)\) return;/.test(view),
+  'Reconcile must bail out (keeping markers) while pin tiles are loading'
+);
+assert.ok(!/map\.on\(\s*'render'/.test(view), 'Pin reconciliation must not run on every repaint');
+assert.ok(/map\.on\(\s*'moveend'/.test(view), 'Pins must reconcile once the camera settles');
+assert.ok(/map\.project\(/.test(view) && /PIN_VIEWPORT_EXIT_MARGIN/.test(view), 'Markers must be culled to the viewport with hysteresis');
+assert.ok(!/@keyframes pin-cluster-in/.test(fs.readFileSync(path.join(WEBAPP_ROOT, 'app/globals.css'), 'utf8')), 'Clusters must not replay an entrance animation on every regroup');
 assert.ok(/getClusterExpansionZoom/.test(view), 'Clicking a cluster must zoom to its expansion zoom');
 assert.ok(/setClusterOptions\(\{\s*cluster:\s*clusterPins/.test(view), 'Cluster toggle must switch source clustering');
 const page = fs.readFileSync(path.join(WEBAPP_ROOT, 'app/app/page.tsx'), 'utf8');

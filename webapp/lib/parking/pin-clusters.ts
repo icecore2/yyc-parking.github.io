@@ -7,13 +7,13 @@ import { PROVIDERS } from './providers';
  * Zone pins are fed into a clustered MapLibre GeoJSON source (supercluster runs
  * in the map's web worker). At zoom <= PIN_CLUSTER_MAX_ZOOM nearby pins merge into
  * a single count bubble; above it every zone renders as its own teardrop pin.
- * Only the clusters/pins inside the loaded viewport tiles get DOM markers, so the
+ * Only the clusters/pins inside (or just around) the viewport get DOM markers, so the
  * number of HTML elements stays small no matter how many zones are loaded.
  *
  * PIN_CLUSTER_MAX_ZOOM must stay below the zoom the map flies to when a zone is
- * previewed/selected (15.5 / 16) so the active pin is always broken out.
+ * previewed/selected (16 for the detail sheet); a previewed pin at 15.5 is force-shown outside its cluster.
  */
-export const PIN_CLUSTER_MAX_ZOOM = 14;
+export const PIN_CLUSTER_MAX_ZOOM = 15;
 export const PIN_CLUSTER_RADIUS = 60;
 
 export const PIN_CLUSTER_PROVIDER_IDS = Object.keys(PROVIDERS) as ProviderId[];

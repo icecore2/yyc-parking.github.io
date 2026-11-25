@@ -25,6 +25,12 @@ import {
 } from '@/lib/parking/pin-clusters';
 
 const PIN_SOURCE_ID = 'parking-pins-source';
+/** Off-screen px within which a pin/cluster gets a DOM marker. */
+const PIN_VIEWPORT_ENTER_MARGIN = 80;
+/** An on-screen marker is only removed once it is this far off-screen (avoids edge churn). */
+const PIN_VIEWPORT_EXIT_MARGIN = 240;
+/** Max reconcile rate while the camera is moving; a final pass always runs on moveend. */
+const PIN_RECONCILE_INTERVAL_MS = 120;
 
 if (typeof window !== 'undefined' && !config.WORKER_URL) {
   config.WORKER_URL = '/maplibre-gl-worker.mjs';
@@ -736,16 +742,20 @@ export default function MapLibreView({
       map: Map,
       cache: globalThis.Map<K, Marker>,
       visible: Set<K>,
-      next: Set<K>
+      next: Set<K>,
+      evictHidden = false
     ) {
       for (const [key, marker] of cache) {
         const shouldShow = next.has(key);
         if (shouldShow && !visible.has(key)) {
           marker.addTo(map);
           visible.add(key);
-        } else if (!shouldShow && visible.has(key)) {
-          marker.remove();
-          visible.delete(key);
+        } else if (!shouldShow) {
+          if (visible.has(key)) {
+            marker.remove();
+            visible.delete(key);
+          }
+          if (evictHidden) cache.delete(key);
         }
       }
     }
@@ -757,14 +767,34 @@ export default function MapLibreView({
       const nextZoneIds = new Set<string>();
       const nextClusterIds = new Set<number>();
 
-      if (showPins && map.getSource(PIN_SOURCE_ID) && map.isSourceLoaded(PIN_SOURCE_ID)) {
+      if (showPins) {
+        if (!map.getSource(PIN_SOURCE_ID)) return;
+        // While tiles for a new zoom level stream in, the source reports "not loaded" and
+        // querySourceFeatures is partial. Keep the current markers instead of clearing them —
+        // clearing here is what made every pin blink on each zoom step.
+        if (!map.isSourceLoaded(PIN_SOURCE_ID)) return;
+
+        // Viewport culling with hysteresis: features enter within ENTER margin of the
+        // canvas, and on-screen markers are only dropped once beyond the wider EXIT margin.
+        const canvas = map.getCanvas();
+        const width = canvas.clientWidth;
+        const height = canvas.clientHeight;
+        const inView = (lngLat: [number, number], margin: number) => {
+          const p = map.project(lngLat);
+          return p.x >= -margin && p.y >= -margin && p.x <= width + margin && p.y <= height + margin;
+        };
+
         for (const feature of map.querySourceFeatures(PIN_SOURCE_ID)) {
           const props = (feature.properties || {}) as Record<string, unknown>;
           if (feature.geometry.type !== 'Point') continue;
-          const coords = feature.geometry.coordinates;
+          const coords = feature.geometry.coordinates as [number, number];
           if (props.cluster) {
             const clusterId = Number(props.cluster_id);
             if (nextClusterIds.has(clusterId)) continue; // features repeat across tile edges
+            const margin = visibleClusterIdsRef.current.has(clusterId)
+              ? PIN_VIEWPORT_EXIT_MARGIN
+              : PIN_VIEWPORT_ENTER_MARGIN;
+            if (!inView(coords, margin)) continue;
             nextClusterIds.add(clusterId);
             if (!clusterMarkersRef.current.has(clusterId)) {
               clusterMarkersRef.current.set(
@@ -775,6 +805,10 @@ export default function MapLibreView({
           } else {
             const zone = zoneByIdRef.current.get(String(props.id));
             if (!zone || nextZoneIds.has(zone.id)) continue;
+            const margin = visibleZoneIdsRef.current.has(zone.id)
+              ? PIN_VIEWPORT_EXIT_MARGIN
+              : PIN_VIEWPORT_ENTER_MARGIN;
+            if (!inView(coords, margin)) continue;
             nextZoneIds.add(zone.id);
             ensureZoneMarker(zone);
           }
@@ -790,31 +824,47 @@ export default function MapLibreView({
       }
 
       syncVisible(map, zoneMarkersRef.current, visibleZoneIdsRef.current, nextZoneIds);
-      syncVisible(map, clusterMarkersRef.current, visibleClusterIdsRef.current, nextClusterIds);
+      // Cluster ids are only valid for one zoom level, so hidden cluster markers are discarded
+      syncVisible(map, clusterMarkersRef.current, visibleClusterIdsRef.current, nextClusterIds, true);
     };
 
     updatePinsRef.current();
   }, [showPins, rateMode]);
 
-  // Drive reconciliation from the render loop (fires while panning/zooming and when tiles load)
+  // Drive reconciliation from camera movement (throttled) and from pin-source tile loads,
+  // rather than from every repaint.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapStyleReady) return;
-    let frame = 0;
-    const onRender = () => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        updatePinsRef.current();
-      });
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastRun = 0;
+
+    const runNow = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      lastRun = performance.now();
+      updatePinsRef.current();
     };
-    map.on('render', onRender);
-    map.on('sourcedata', onRender);
-    onRender();
+    const onMove = () => {
+      const wait = PIN_RECONCILE_INTERVAL_MS - (performance.now() - lastRun);
+      if (wait <= 0) runNow();
+      else if (!timer) timer = setTimeout(runNow, wait);
+    };
+    const onSourceData = (e: { sourceId?: string; isSourceLoaded?: boolean }) => {
+      if (e.sourceId === PIN_SOURCE_ID && e.isSourceLoaded) runNow();
+    };
+
+    map.on('move', onMove);
+    map.on('moveend', runNow);
+    map.on('sourcedata', onSourceData);
+    runNow();
     return () => {
-      if (frame) cancelAnimationFrame(frame);
-      map.off('render', onRender);
-      map.off('sourcedata', onRender);
+      if (timer) clearTimeout(timer);
+      map.off('move', onMove);
+      map.off('moveend', runNow);
+      map.off('sourcedata', onSourceData);
     };
   }, [mapStyleReady]);
 
