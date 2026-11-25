@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Map,
   Marker,
@@ -12,6 +12,19 @@ import {
 import { ParkingZone, CustomLocation, BasemapId } from '@/lib/parking/types';
 import { PROVIDERS } from '@/lib/parking/providers';
 import { resolvePinAnchorCoordinates } from '@/lib/parking/geometry';
+import {
+  PIN_CLUSTER_MAX_ZOOM,
+  PIN_CLUSTER_RADIUS,
+  buildClusterProperties,
+  buildPinFeatures,
+  buildProviderRingGradient,
+  formatClusterCount,
+  formatClusterRateHint,
+  getClusterDiameter,
+  getClusterProviderMix,
+} from '@/lib/parking/pin-clusters';
+
+const PIN_SOURCE_ID = 'parking-pins-source';
 
 if (typeof window !== 'undefined' && !config.WORKER_URL) {
   config.WORKER_URL = '/maplibre-gl-worker.mjs';
@@ -27,6 +40,8 @@ interface MapLibreViewProps {
   onPreviewZone?: (zone: ParkingZone | null) => void;
   basemap?: BasemapId;
   showPins?: boolean;
+  /** Group nearby pins into count bubbles when zoomed out (default on). */
+  clusterPins?: boolean;
   showShapes?: boolean;
   rateMode?: 'max' | 'live';
   activeLocation?: CustomLocation | null;
@@ -68,6 +83,7 @@ export default function MapLibreView({
   onPreviewZone,
   basemap = 'osm',
   showPins = true,
+  clusterPins = true,
   showShapes = true,
   rateMode = 'max',
   activeLocation = null,
@@ -78,7 +94,11 @@ export default function MapLibreView({
 }: MapLibreViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
-  const markersRef = useRef<Marker[]>([]);
+  const zoneMarkersRef = useRef<globalThis.Map<string, Marker>>(new globalThis.Map());
+  const clusterMarkersRef = useRef<globalThis.Map<number, Marker>>(new globalThis.Map());
+  const visibleZoneIdsRef = useRef<Set<string>>(new Set());
+  const visibleClusterIdsRef = useRef<Set<number>>(new Set());
+  const updatePinsRef = useRef<() => void>(() => {});
   const markerElementsRef = useRef<Record<string, HTMLDivElement>>({});
   const pinAnchorMapRef = useRef<globalThis.Map<string, [number, number]>>(new globalThis.Map());
   const targetMarkerRef = useRef<Marker | null>(null);
@@ -87,6 +107,19 @@ export default function MapLibreView({
   const [mapStyleReady, setMapStyleReady] = useState(false);
 
   const pinAnchorMap = useMemo(() => resolvePinAnchorCoordinates(zones), [zones]);
+  const zoneById = useMemo(() => new globalThis.Map(zones.map((z) => [z.id, z])), [zones]);
+  const zoneByIdRef = useRef(zoneById);
+
+  // Remove and forget every cached pin/cluster marker (rebuilt lazily for the viewport)
+  const resetPinMarkers = useCallback(() => {
+    zoneMarkersRef.current.forEach((m) => m.remove());
+    clusterMarkersRef.current.forEach((m) => m.remove());
+    zoneMarkersRef.current.clear();
+    clusterMarkersRef.current.clear();
+    visibleZoneIdsRef.current.clear();
+    visibleClusterIdsRef.current.clear();
+    markerElementsRef.current = {};
+  }, []);
 
   const zonesRef = useRef(zones);
   const onSelectZoneRef = useRef(onSelectZone);
@@ -105,7 +138,9 @@ export default function MapLibreView({
     isPickingLocationRef.current = isPickingLocation;
     onPickMapPointRef.current = onPickMapPoint;
     pinAnchorMapRef.current = pinAnchorMap;
+    zoneByIdRef.current = zoneById;
   }, [
+    zoneById,
     zones,
     onSelectZone,
     selectedZone,
@@ -305,7 +340,25 @@ export default function MapLibreView({
         },
       });
 
-      const handleLineClick = (e: { features?: { properties?: { id?: string } }[] }) => {
+      // Clustered pin index. Pins/clusters are drawn as HTML markers for the viewport only;
+      // this invisible layer just keeps the source's tiles loaded for querySourceFeatures.
+      map.addSource(PIN_SOURCE_ID, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+        cluster: true,
+        clusterMaxZoom: PIN_CLUSTER_MAX_ZOOM,
+        clusterRadius: PIN_CLUSTER_RADIUS,
+        clusterProperties: buildClusterProperties(),
+      });
+
+      map.addLayer({
+        id: 'parking-pins-index',
+        type: 'circle',
+        source: PIN_SOURCE_ID,
+        paint: { 'circle-radius': 0, 'circle-opacity': 0, 'circle-stroke-width': 0 },
+      });
+
+      const handleLineClick =(e: { features?: { properties?: { id?: string } }[] }) => {
         if (isPickingLocationRef.current) return;
         if (!e.features || e.features.length === 0) return;
         const featId = e.features[0].properties?.id;
@@ -340,7 +393,7 @@ export default function MapLibreView({
       // Click anywhere to pick location point (if in picker mode) or dismiss preview card
       map.on('click', (e) => {
         const clickTarget = e.originalEvent?.target as HTMLElement | null;
-        if (clickTarget?.closest('.custom-pin-marker')) {
+        if (clickTarget?.closest('.custom-pin-marker, .pin-cluster-marker')) {
           return;
         }
         if (isPickingLocationRef.current && onPickMapPointRef.current) {
@@ -523,22 +576,46 @@ export default function MapLibreView({
     }
   }, [zones, pinAnchorMap, mapStyleReady]);
 
-  // Update authentic teardrop pin markers anchored by exact sharp tip on each stalls bar
+  // Feed zone pins into the clustered GeoJSON source (supercluster runs in the map worker)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !styleReadyRef.current) return;
+    const source = map.getSource(PIN_SOURCE_ID) as GeoJSONSource | undefined;
+    if (!source) return;
 
-    // Clear existing HTML markers
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current = [];
-    markerElementsRef.current = {};
+    // Zone content and cluster ids are about to change: drop every cached marker
+    resetPinMarkers();
+    source.setData({
+      type: 'FeatureCollection',
+      features: buildPinFeatures(zones, pinAnchorMap),
+    });
+  }, [zones, pinAnchorMap, mapStyleReady, resetPinMarkers]);
 
-    if (!showPins) return;
+  // Cluster toggle: switch the worker index on/off without re-sending the zone data
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !styleReadyRef.current) return;
+    const source = map.getSource(PIN_SOURCE_ID) as GeoJSONSource | undefined;
+    if (!source) return;
+    resetPinMarkers();
+    void source.setClusterOptions({
+      cluster: clusterPins,
+      clusterMaxZoom: PIN_CLUSTER_MAX_ZOOM,
+      clusterRadius: PIN_CLUSTER_RADIUS,
+    });
+  }, [clusterPins, mapStyleReady, resetPinMarkers]);
 
-    zones.forEach((zone) => {
+  // Rebuild pin elements when their visual mode changes
+  useEffect(() => {
+    resetPinMarkers();
+    updatePinsRef.current();
+  }, [rateMode, showPins, resetPinMarkers]);
+
+  // Reconcile DOM markers with the clusters / single pins in the loaded viewport tiles.
+  // Markers are cached by key and only added/removed on change, so panning stays cheap.
+  useEffect(() => {
+    function createZoneMarker(zone: ParkingZone, isSelected: boolean) {
       const el = document.createElement('div');
-      const activeId = selectedZoneRef.current?.id || previewZoneRef.current?.id;
-      const isSelected = activeId === zone.id;
       el.className = `custom-pin-marker ${isSelected ? 'pin-active' : ''}`;
       el.dataset.zoneId = zone.id;
       el.dataset.zoneNumber = zone.zoneNumber || zone.id;
@@ -581,16 +658,165 @@ export default function MapLibreView({
       });
 
       el.appendChild(bubble);
-      markerElementsRef.current[zone.id] = el;
 
-      const anchorCoord = pinAnchorMap.get(zone.id) || zone.coordinates;
-      const marker = new Marker({ element: el, anchor: 'bottom' })
-        .setLngLat(anchorCoord)
-        .addTo(map);
+      const anchorCoord = pinAnchorMapRef.current.get(zone.id) || zone.coordinates;
+      const marker = new Marker({ element: el, anchor: 'bottom' }).setLngLat(anchorCoord);
+      return { marker, element: el };
+    }
 
-      markersRef.current.push(marker);
-    });
-  }, [zones, pinAnchorMap, showPins, rateMode]);
+    function ensureZoneMarker(zone: ParkingZone) {
+      if (zoneMarkersRef.current.has(zone.id)) return;
+      const activeId = selectedZoneRef.current?.id || previewZoneRef.current?.id;
+      const { marker, element } = createZoneMarker(zone, activeId === zone.id);
+      zoneMarkersRef.current.set(zone.id, marker);
+      markerElementsRef.current[zone.id] = element;
+    }
+
+    function createClusterMarker(
+      map: Map,
+      clusterId: number,
+      props: Record<string, unknown>,
+      coord: [number, number]
+    ) {
+      const count = Number(props.point_count) || 0;
+      const slices = getClusterProviderMix(props);
+      const hint = rateMode === 'live' ? formatClusterRateHint(props) : '';
+      // Leave room for the rate hint line under the count
+      const diameter = getClusterDiameter(count) + (hint ? 14 : 0);
+
+      const el = document.createElement('div');
+      el.className = 'pin-cluster-marker';
+      el.dataset.clusterId = String(clusterId);
+      el.dataset.count = String(count);
+      el.title = `${count} parking zones · ${slices
+        .map((s) => `${s.count} ${PROVIDERS[s.provider].name}`)
+        .join(', ')} — click to zoom in`;
+
+      const bubble = document.createElement('button');
+      bubble.type = 'button';
+      bubble.className = 'pin-cluster';
+      bubble.setAttribute('aria-label', `${count} parking zones, zoom in`);
+      bubble.style.setProperty('--cluster-size', `${diameter}px`);
+      bubble.style.setProperty('--cluster-ring', buildProviderRingGradient(slices));
+
+      const countEl = document.createElement('span');
+      countEl.className = 'pin-cluster-count';
+      countEl.textContent = formatClusterCount(count);
+      bubble.appendChild(countEl);
+
+      if (hint) {
+        const hintEl = document.createElement('span');
+        hintEl.className = 'pin-cluster-hint';
+        hintEl.textContent = hint;
+        bubble.appendChild(hintEl);
+      }
+
+      bubble.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const source = map.getSource(PIN_SOURCE_ID) as GeoJSONSource | undefined;
+        if (!source) return;
+        try {
+          const expansionZoom = await source.getClusterExpansionZoom(clusterId);
+          map.easeTo({
+            center: coord,
+            zoom: Math.min(Math.max(expansionZoom, map.getZoom() + 1), 18),
+            duration: 450,
+          });
+        } catch {
+          // Cluster ids are invalidated by setData; fall back to a simple zoom-in
+          map.easeTo({ center: coord, zoom: map.getZoom() + 2, duration: 450 });
+        }
+      });
+
+      el.appendChild(bubble);
+      return new Marker({ element: el, anchor: 'center' }).setLngLat(coord);
+    }
+
+    function syncVisible<K>(
+      map: Map,
+      cache: globalThis.Map<K, Marker>,
+      visible: Set<K>,
+      next: Set<K>
+    ) {
+      for (const [key, marker] of cache) {
+        const shouldShow = next.has(key);
+        if (shouldShow && !visible.has(key)) {
+          marker.addTo(map);
+          visible.add(key);
+        } else if (!shouldShow && visible.has(key)) {
+          marker.remove();
+          visible.delete(key);
+        }
+      }
+    }
+
+    updatePinsRef.current = () => {
+      const map = mapRef.current;
+      if (!map || !styleReadyRef.current) return;
+
+      const nextZoneIds = new Set<string>();
+      const nextClusterIds = new Set<number>();
+
+      if (showPins && map.getSource(PIN_SOURCE_ID) && map.isSourceLoaded(PIN_SOURCE_ID)) {
+        for (const feature of map.querySourceFeatures(PIN_SOURCE_ID)) {
+          const props = (feature.properties || {}) as Record<string, unknown>;
+          if (feature.geometry.type !== 'Point') continue;
+          const coords = feature.geometry.coordinates;
+          if (props.cluster) {
+            const clusterId = Number(props.cluster_id);
+            if (nextClusterIds.has(clusterId)) continue; // features repeat across tile edges
+            nextClusterIds.add(clusterId);
+            if (!clusterMarkersRef.current.has(clusterId)) {
+              clusterMarkersRef.current.set(
+                clusterId,
+                createClusterMarker(map, clusterId, props, [coords[0], coords[1]])
+              );
+            }
+          } else {
+            const zone = zoneByIdRef.current.get(String(props.id));
+            if (!zone || nextZoneIds.has(zone.id)) continue;
+            nextZoneIds.add(zone.id);
+            ensureZoneMarker(zone);
+          }
+        }
+
+        // Keep the previewed / selected pin visible even while it sits inside a cluster
+        const activeZone = selectedZoneRef.current || previewZoneRef.current;
+        const activeMatch = activeZone ? zoneByIdRef.current.get(activeZone.id) : undefined;
+        if (activeMatch && !nextZoneIds.has(activeMatch.id)) {
+          nextZoneIds.add(activeMatch.id);
+          ensureZoneMarker(activeMatch);
+        }
+      }
+
+      syncVisible(map, zoneMarkersRef.current, visibleZoneIdsRef.current, nextZoneIds);
+      syncVisible(map, clusterMarkersRef.current, visibleClusterIdsRef.current, nextClusterIds);
+    };
+
+    updatePinsRef.current();
+  }, [showPins, rateMode]);
+
+  // Drive reconciliation from the render loop (fires while panning/zooming and when tiles load)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapStyleReady) return;
+    let frame = 0;
+    const onRender = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        updatePinsRef.current();
+      });
+    };
+    map.on('render', onRender);
+    map.on('sourcedata', onRender);
+    onRender();
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      map.off('render', onRender);
+      map.off('sourcedata', onRender);
+    };
+  }, [mapStyleReady]);
 
   // When selected or previewed zone changes, highlight pin, stalls bar & sharp-tip contact point
   useEffect(() => {
@@ -606,6 +832,8 @@ export default function MapLibreView({
         el.classList.remove('pin-active');
       }
     });
+    // Break the active pin out of its cluster immediately (or tuck the previous one back in)
+    updatePinsRef.current();
 
     if (styleReadyRef.current) {
       const filterExpr = [

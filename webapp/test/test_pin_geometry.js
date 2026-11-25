@@ -390,7 +390,7 @@ console.log(
   const mapLibreView = readWebappFile('components/map/MapLibreView.tsx');
   assert.ok(/anchor:\s*'bottom'/.test(mapLibreView), 'MapLibreView markers must use anchor: bottom');
   assert.ok(/resolvePinAnchorCoordinates/.test(mapLibreView), 'MapLibreView must resolve staggered on-bar coordinates');
-  assert.ok(/closest\(['"]\.custom-pin-marker['"]\)/.test(mapLibreView), 'MapLibreView canvas click handler must guard against pin clicks');
+  assert.ok(/closest\(['"]\.custom-pin-marker[^'"]*['"]\)/.test(mapLibreView), 'MapLibreView canvas click handler must guard against pin clicks');
   assert.ok(/parking-selected-line-glow/.test(mapLibreView), 'MapLibreView must include amber outer glow stalls bar layer');
   assert.ok(/parking-selected-line-layer/.test(mapLibreView), 'MapLibreView must include amber core stalls bar layer');
   assert.ok(/parking-selected-anchor-layer/.test(mapLibreView), 'MapLibreView must include sharp-tip contact dot layer');

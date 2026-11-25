@@ -28,7 +28,6 @@ import {
   BasemapId,
 } from '@/lib/parking/types';
 import {
-  CACHE_KEY,
   fetchCalgaryParkingZones,
   getLastDataFetchTime,
   SAMPLE_CALGARY_ZONES,
@@ -62,23 +61,6 @@ function calculateHaversineMeters(
   return R * c;
 }
 
-function getInitialZones(): ParkingZone[] {
-  if (typeof window !== 'undefined') {
-    try {
-      const raw = sessionStorage.getItem(CACHE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed.zones && Array.isArray(parsed.zones) && parsed.zones.length > 0) {
-          return parsed.zones;
-        }
-      }
-    } catch {
-      // Ignore
-    }
-  }
-  return SAMPLE_CALGARY_ZONES;
-}
-
 export default function MapAppPage() {
   const { user, profile, isAdmin } = useAuth();
   const {
@@ -88,11 +70,12 @@ export default function MapAppPage() {
     refreshData,
   } = useWalkthrough();
   const uid = user?.uid || profile?.uid || 'demo_user';
-  const [allZones, setAllZones] = useState<ParkingZone[]>(getInitialZones);
+  // Initial state must be identical on server and client to avoid hydration mismatches.
+  // Cached zones (sessionStorage) arrive right after mount via fetchCalgaryParkingZones,
+  // which serves its cache before touching the network.
+  const [allZones, setAllZones] = useState<ParkingZone[]>(SAMPLE_CALGARY_ZONES);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<number>(() => {
-    return typeof window !== 'undefined' ? getLastDataFetchTime() : Date.now();
-  });
+  const [lastUpdated, setLastUpdated] = useState<number>(0);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
   // Toolbar state
@@ -124,12 +107,8 @@ export default function MapAppPage() {
 
   // Modals & Panels
   const deepLinkZoneHandledRef = useRef(false);
-  const [selectedZone, setSelectedZone] = useState<ParkingZone | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const zoneId = new URLSearchParams(window.location.search).get('zone');
-    if (!zoneId) return null;
-    return getInitialZones().find((z) => z.id === zoneId || z.zoneNumber === zoneId) || null;
-  });
+  // ?zone= deep links are resolved once zones load (see the data-loading effect below)
+  const [selectedZone, setSelectedZone] = useState<ParkingZone | null>(null);
   const [previewZone, setPreviewZone] = useState<ParkingZone | null>(null);
   const [showLocationsDialog, setShowLocationsDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
@@ -481,6 +460,7 @@ export default function MapAppPage() {
           onPreviewZone={(z) => setPreviewZone(z)}
           basemap={basemap}
           showPins={showPins}
+          clusterPins={showCluster}
           showShapes={showShapes}
           rateMode={rateMode}
           activeLocation={activeLocation}

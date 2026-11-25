@@ -59,6 +59,8 @@ const markerSelectors = [
   '.custom-pin-marker',
   '.custom-pin-marker:hover',
   '.custom-pin-marker.pin-active',
+  '.pin-cluster-marker',
+  '.pin-cluster-marker:hover',
   '.yyc-marker-container:hover',
   '.yyc-marker-selected',
   '.custom-target-marker',
