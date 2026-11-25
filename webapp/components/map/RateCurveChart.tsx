@@ -1,18 +1,26 @@
 'use client';
 
 import React, { useState } from 'react';
-import { generate24HourProfile, ParsedInterval } from '@/lib/parking/rate-parser';
-import { HourlyRatePoint } from '@/lib/parking/types';
+import { buildDayProfile } from '@/lib/parking/rate-schedule';
+import type { HourlyRatePoint, RatePeriod } from '@/lib/parking/types';
 
 interface RateCurveChartProps {
-  intervals: ParsedInterval[];
+  schedule: RatePeriod[];
+  /** 0 = Sunday … 6 = Saturday (Calgary time) */
+  initialDay: number;
 }
 
-export default function RateCurveChart({ intervals }: RateCurveChartProps) {
-  const [dayType, setDayType] = useState<'weekday' | 'saturday' | 'sunday'>('weekday');
-  const profile: HourlyRatePoint[] = generate24HourProfile(intervals, dayType);
+const DAY_PILLS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-  const maxRate = Math.max(5, ...profile.map((p) => p.rate));
+export default function RateCurveChart({ schedule, initialDay }: RateCurveChartProps) {
+  const [day, setDay] = useState<number>(initialDay);
+  const profile: HourlyRatePoint[] = buildDayProfile(schedule, day);
+
+  const rates = profile.map((p) => p.rate);
+  const peakRate = Math.max(0, ...rates);
+  const maxRate = Math.max(1, ...rates);
+  const freeAllDay = rates.every((r) => r === 0);
   const height = 120;
   const width = 360;
   const paddingLeft = 28;
@@ -40,17 +48,21 @@ export default function RateCurveChart({ intervals }: RateCurveChartProps) {
       <div className="flex items-center justify-between mb-2">
         <span className="font-semibold text-foreground text-[11px]">24-Hour Rate Profile</span>
         <div className="flex items-center gap-1 bg-background rounded-lg p-0.5 border border-border">
-          {(['weekday', 'saturday', 'sunday'] as const).map((d) => (
+          {DAY_PILLS.map((label, d) => (
             <button
               key={d}
-              onClick={() => setDayType(d)}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                dayType === d
+              type="button"
+              onClick={() => setDay(d)}
+              aria-pressed={day === d}
+              aria-label={DAY_NAMES[d]}
+              title={DAY_NAMES[d]}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                day === d
                   ? 'bg-emerald-600 text-white'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              {d === 'weekday' ? 'Mon-Fri' : d === 'saturday' ? 'Sat' : 'Sun'}
+              {label}
             </button>
           ))}
         </div>
@@ -74,7 +86,7 @@ export default function RateCurveChart({ intervals }: RateCurveChartProps) {
                   strokeDasharray="2,2"
                 />
                 <text x={paddingLeft - 4} y={y + 3} textAnchor="end" fontSize="9" fill="currentColor">
-                  ${val.toFixed(0)}
+                  ${Number.isInteger(val) ? val.toFixed(0) : val.toFixed(2)}
                 </text>
               </g>
             );
@@ -100,9 +112,9 @@ export default function RateCurveChart({ intervals }: RateCurveChartProps) {
       </div>
 
       <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
-        <span>Peak: ${maxRate.toFixed(2)}/hr</span>
+        <span>{DAY_NAMES[day]}</span>
         <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-          {dayType === 'sunday' ? 'Free All Day' : 'Free after enforced hours'}
+          {freeAllDay ? 'Free all day' : `Peak $${peakRate.toFixed(2)}/hr`}
         </span>
       </div>
     </div>

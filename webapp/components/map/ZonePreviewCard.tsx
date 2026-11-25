@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { Footprints, X } from 'lucide-react';
 import { ParkingZone } from '@/lib/parking/types';
 import { PROVIDERS } from '@/lib/parking/providers';
+import { resolveRateAt } from '@/lib/parking/rate-schedule';
+import { getCalgaryTime } from '@/lib/parking/calgary-clock';
 import { cn } from '@/lib/utils';
 
 export interface ZonePreviewCardProps {
@@ -29,6 +31,7 @@ export default function ZonePreviewCard({
     typeof zone.stallCount === 'number' && zone.stallCount > 0
       ? `${zone.stallCount} stalls`
       : zone.stallType || 'Parking';
+  const live = resolveRateAt(zone.rateSchedule, getCalgaryTime());
 
   return (
     <div
@@ -43,7 +46,7 @@ export default function ZonePreviewCard({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-bold text-sm text-foreground">{zone.title}</span>
             <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0">
-              {zone.isCurrentlyFree ? 'FREE NOW' : `$${zone.activeRate.toFixed(2)}/hr`}
+              {live.isFree ? 'FREE NOW' : live.statusText}
             </span>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{zone.address}</p>

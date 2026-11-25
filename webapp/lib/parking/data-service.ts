@@ -1,5 +1,7 @@
 import { ParkingZone, ParkingZoneGeometry } from './types';
-import { parseRateSchedule, getCurrentRate } from './rate-parser';
+import { parseRateSchedule } from './rate-parser';
+import { resolveRateAt } from './rate-schedule';
+import { getCalgaryTime, type CalgaryTime } from './calgary-clock';
 import { getPrimaryPath, pointAlongPolyline } from './geometry';
 
 interface ArcGISFeature {
@@ -313,6 +315,18 @@ export function getLastDataFetchTime(): number {
   return Date.now();
 }
 
+/**
+ * Returns copies of the zones with activeRate/isCurrentlyFree resolved from each zone's
+ * rateSchedule at Calgary time t. Zones without a schedule pass through unchanged.
+ */
+export function withLiveRates(zones: ParkingZone[], t: CalgaryTime): ParkingZone[] {
+  return zones.map((zone) => {
+    if (!zone.rateSchedule || zone.rateSchedule.length === 0) return zone;
+    const live = resolveRateAt(zone.rateSchedule, t);
+    return { ...zone, activeRate: live.rate, isCurrentlyFree: live.isFree };
+  });
+}
+
 export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<ParkingZone[]> {
   if (forceRefresh) {
     inMemoryCache = null;
@@ -327,7 +341,7 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
     // Check fast cache first
     const cached = getCachedZones();
     if (cached && cached.length > 0) {
-      return cached;
+      return withLiveRates(cached, getCalgaryTime());
     }
   }
 
@@ -345,7 +359,7 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
       const json = await res.json();
       if (json.zones && Array.isArray(json.zones) && json.zones.length > 0) {
         setCachedZones(json.zones);
-        return json.zones;
+        return withLiveRates(json.zones, getCalgaryTime());
       }
     }
   } catch (err) {
@@ -368,7 +382,7 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
 
     if (features.length === 0) {
       setCachedZones(SAMPLE_CALGARY_ZONES);
-      return SAMPLE_CALGARY_ZONES;
+      return withLiveRates(SAMPLE_CALGARY_ZONES, getCalgaryTime());
     }
 
     const liveZones: ParkingZone[] = [];
@@ -398,8 +412,7 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
       const midpoint = pointAlongPolyline(primaryPath, 0.5);
 
       const htmlRates = attrs.HTML_ZONE_RATE ? String(attrs.HTML_ZONE_RATE) : '';
-      const { intervals, periods } = parseRateSchedule(htmlRates);
-      const currentRateCalc = getCurrentRate(intervals);
+      const { periods } = parseRateSchedule(htmlRates);
 
       const objectId =
         attrs.OBJECTID !== undefined && attrs.OBJECTID !== null
@@ -432,12 +445,11 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
         brz: attrs.BRZ_NAME ? String(attrs.BRZ_NAME).trim() : 'None',
         priceZone: attrs.PRICE_ZONE ? String(attrs.PRICE_ZONE).trim() : 'Standard',
         maxStayHours: attrs.MAX_TIME ? Number(attrs.MAX_TIME) : undefined,
-        enforceableHours: attrs.ENFORCEABLE_TIME ? String(attrs.ENFORCEABLE_TIME).trim() : '09:00 - 18:00 Mon-Sat',
-        rateSchedule: periods.length > 0 ? periods : [
-          { days: 'Mon-Sat', startTime: '09:00', endTime: '18:00', ratePerHour: currentRateCalc.rate }
-        ],
-        activeRate: currentRateCalc.rate,
-        isCurrentlyFree: currentRateCalc.isFree,
+        enforceableHours: attrs.ENFORCEABLE_TIME ? String(attrs.ENFORCEABLE_TIME).trim() : undefined,
+        rateSchedule: periods,
+        // Resolved at Calgary time by withLiveRates on every return path.
+        activeRate: 0,
+        isCurrentlyFree: true,
         coordinates: midpoint,
         geometry,
         provider: 'parkplus_on_street',
@@ -452,10 +464,10 @@ export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<Pa
 
     const fullDataset = [...liveZones, ...offStreetCurated];
     setCachedZones(fullDataset);
-    return fullDataset;
+    return withLiveRates(fullDataset, getCalgaryTime());
   } catch (err) {
     console.warn('Live Calgary ArcGIS fetch failed or timed out; using robust sample dataset.', err);
     setCachedZones(SAMPLE_CALGARY_ZONES);
-    return SAMPLE_CALGARY_ZONES;
+    return withLiveRates(SAMPLE_CALGARY_ZONES, getCalgaryTime());
   }
 }

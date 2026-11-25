@@ -1,54 +1,61 @@
-import { HourlyRatePoint, RatePeriod } from './types';
+import type { RatePeriod } from './types';
 
-export interface ParsedInterval {
-  header: string;
-  rateText: string;
-  price: number | null;
-  isFree: boolean;
-  isNoParking: boolean;
-  appliesDays: 'all' | 'weekday' | 'saturday' | 'sunday';
-  timeRange: { start: number; end: number } | null;
-}
+// Webapp copy of services/parking-sync/src/utils/rate-parser.ts (parseRateHeader +
+// keep/drop rules). Keep the two in step, as CLAUDE.md's per-platform rule requires.
 
-// Pre-compiled regular expressions for maximum parsing throughput
-const RE_TIME_RANGE = /(\d{1,2}):(\d{2})\s*(AM|PM)\s*to\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i;
+const RE_TIME_RANGE = /(\d{1,2}):(\d{2})\s*(AM|PM)?\s*to\s*(\d{1,2}):(\d{2})\s*(AM|PM)?/i;
 const RE_DOUBLE_BR = /<br\s*\/?>\s*<br\s*\/?>/gi;
 const RE_SINGLE_BR = /<br\s*\/?>/gi;
 const RE_BOLD_TAGS = /<\/?b>/gi;
 const RE_PRICE = /\$([0-9]+(?:\.[0-9]{2})?)/;
 const RE_FREE = /free/i;
-const RE_NO_PARKING = /no parking/i;
 
-export function parseTimeRangeToMinutes(timeStr: string): { start: number; end: number } | null {
-  const m = timeStr.match(RE_TIME_RANGE);
-  if (!m) return null;
+// First matching rule wins. Daily is checked before Saturday/Sunday so that
+// "Mon-Sun" is not read as Sunday.
+const DAY_RULES: Array<[RegExp, string]> = [
+  [/\bmon(?:-|\s+to\s+)sat\b/i, 'Mon-Sat'],
+  [/\bmon(?:-|\s+to\s+)thu\b/i, 'Mon-Thu'],
+  [/\b(?:mon(?:-|\s+to\s+)fri|weekdays?)\b/i, 'Mon-Fri'],
+  [/\b(?:daily|mon-sun|everyday)\b/i, 'Daily'],
+  [/\b(?:sat|saturday)\b/i, 'Saturday'],
+  [/\b(?:sun|sunday|holiday)/i, 'Sunday'],
+  [/\b(?:fri|friday)\b/i, 'Fri'],
+];
 
-  let h1 = parseInt(m[1], 10);
-  const min1 = parseInt(m[2], 10);
-  const p1 = m[3].toUpperCase();
-  if (p1 === 'PM' && h1 !== 12) h1 += 12;
-  if (p1 === 'AM' && h1 === 12) h1 = 0;
+function to24h(hour: string, minute: string, meridiem: string | undefined): string {
+  let h = parseInt(hour, 10);
+  const mer = meridiem?.toUpperCase();
+  if (mer === 'PM' && h !== 12) h += 12;
+  if (mer === 'AM' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${minute}`;
+}
 
-  let h2 = parseInt(m[4], 10);
-  const min2 = parseInt(m[5], 10);
-  const p2 = m[6].toUpperCase();
-  if (p2 === 'PM' && h2 !== 12) h2 += 12;
-  if (p2 === 'AM' && h2 === 12) h2 = 0;
-
+export function parseRateHeader(header: string): {
+  days: string | null;
+  startTime: string | null;
+  endTime: string | null;
+} {
+  const days = DAY_RULES.find(([re]) => re.test(header))?.[1] ?? null;
+  const m = header.match(RE_TIME_RANGE);
   return {
-    start: h1 * 60 + min1,
-    end: h2 * 60 + min2,
+    days,
+    startTime: m ? to24h(m[1], m[2], m[3]) : null,
+    endTime: m ? to24h(m[4], m[5], m[6]) : null,
   };
 }
 
+/**
+ * Parse a ParkPlus HTML_ZONE_RATE string into rate periods.
+ * Headers without a time range are dropped, except a free "Sunday/Holidays" header,
+ * which becomes an all-day free Sunday period.
+ */
 export function parseRateSchedule(htmlRates: string | undefined | null): {
   minRate: number;
   maxRate: number;
-  intervals: ParsedInterval[];
   periods: RatePeriod[];
 } {
   if (!htmlRates || !htmlRates.trim()) {
-    return { minRate: 0, maxRate: 0, intervals: [], periods: [] };
+    return { minRate: 0, maxRate: 0, periods: [] };
   }
 
   const clean = htmlRates
@@ -58,7 +65,6 @@ export function parseRateSchedule(htmlRates: string | undefined | null): {
     .trim();
 
   const lines = clean.split('\n');
-  const intervals: ParsedInterval[] = [];
   const periods: RatePeriod[] = [];
   const prices: number[] = [];
 
@@ -67,129 +73,23 @@ export function parseRateSchedule(htmlRates: string | undefined | null): {
     if (!header) continue;
     const rateText = (lines[i + 1] || '').trim();
 
+    const { days, startTime, endTime } = parseRateHeader(header);
     const priceMatch = rateText.match(RE_PRICE);
-    const isFree = RE_FREE.test(rateText) || RE_FREE.test(header);
-    const isNoParking = RE_NO_PARKING.test(rateText) || RE_NO_PARKING.test(header);
+    const isFreeText = RE_FREE.test(rateText);
 
-    let price: number | null = null;
-    if (priceMatch) {
-      price = parseFloat(priceMatch[1]);
+    if (startTime && endTime && priceMatch) {
+      const price = parseFloat(priceMatch[1]);
       prices.push(price);
-    } else if (isFree) {
-      price = 0;
-    }
-
-    let appliesDays: 'all' | 'weekday' | 'saturday' | 'sunday' = 'all';
-    const hLower = header.toLowerCase();
-    if (hLower.includes('mon-fri') || hLower.includes('mon to fri')) {
-      appliesDays = 'weekday';
-    } else if (hLower.includes('saturday')) {
-      appliesDays = 'saturday';
-    } else if (hLower.includes('sunday') || hLower.includes('holiday')) {
-      appliesDays = 'sunday';
-    }
-
-    const timeRange = parseTimeRangeToMinutes(header);
-
-    intervals.push({
-      header,
-      rateText,
-      price,
-      isFree,
-      isNoParking,
-      appliesDays,
-      timeRange,
-    });
-
-    if (price !== null || isFree) {
-      periods.push({
-        days: appliesDays === 'weekday' ? 'Mon-Fri' : appliesDays === 'saturday' ? 'Saturday' : appliesDays === 'sunday' ? 'Sunday' : 'Daily',
-        startTime: timeRange ? `${String(Math.floor(timeRange.start / 60)).padStart(2, '0')}:${String(timeRange.start % 60).padStart(2, '0')}` : '09:00',
-        endTime: timeRange ? `${String(Math.floor(timeRange.end / 60)).padStart(2, '0')}:${String(timeRange.end % 60).padStart(2, '0')}` : '18:00',
-        ratePerHour: price || 0,
-        isFree: isFree || price === 0,
-      });
+      periods.push({ days: days ?? 'Daily', startTime, endTime, ratePerHour: price, isFree: price === 0 });
+    } else if (startTime && endTime && isFreeText) {
+      periods.push({ days: days ?? 'Daily', startTime, endTime, ratePerHour: 0, isFree: true });
+    } else if (days === 'Sunday' && !startTime && isFreeText) {
+      periods.push({ days: 'Sunday', startTime: '00:00', endTime: '23:59', ratePerHour: 0, isFree: true });
     }
   }
 
   const minRate = prices.length > 0 ? Math.min(...prices) : 0;
   const maxRate = prices.length > 0 ? Math.max(...prices) : 0;
 
-  return { minRate, maxRate, intervals, periods };
-}
-
-export function getCurrentRate(intervals: ParsedInterval[], customDate = new Date()): {
-  rate: number;
-  isFree: boolean;
-  statusText: string;
-} {
-  const day = customDate.getDay(); // 0 is Sun, 6 is Sat
-  const minutes = customDate.getHours() * 60 + customDate.getMinutes();
-
-  if (day === 0) {
-    return { rate: 0, isFree: true, statusText: 'Free Parking (Sunday)' };
-  }
-
-  const dayType = day === 6 ? 'saturday' : 'weekday';
-
-  for (const inv of intervals) {
-    let dayMatch = false;
-    if (inv.appliesDays === dayType || inv.appliesDays === 'all') {
-      dayMatch = true;
-    }
-
-    if (dayMatch && inv.timeRange) {
-      if (minutes >= inv.timeRange.start && minutes < inv.timeRange.end) {
-        if (inv.isNoParking) {
-          return { rate: 0, isFree: false, statusText: 'No Parking (Enforced Restriction)' };
-        }
-        if (inv.isFree || inv.price === 0) {
-          return { rate: 0, isFree: true, statusText: 'Free Parking' };
-        }
-        if (inv.price !== null) {
-          return { rate: inv.price, isFree: false, statusText: `$${inv.price.toFixed(2)}/hr` };
-        }
-      }
-    }
-  }
-
-  return { rate: 0, isFree: true, statusText: 'Free Parking (Outside Enforced Hours)' };
-}
-
-export function generate24HourProfile(intervals: ParsedInterval[], dayType: 'weekday' | 'saturday' | 'sunday' = 'weekday'): HourlyRatePoint[] {
-  const points: HourlyRatePoint[] = [];
-
-  for (let hour = 0; hour < 24; hour++) {
-    const currentMin = hour * 60 + 30; // check mid-hour
-    let rate = 0;
-    let isEnforced = false;
-
-    if (dayType !== 'sunday') {
-      for (const inv of intervals) {
-        let match = false;
-        if (inv.appliesDays === dayType || inv.appliesDays === 'all') match = true;
-
-        if (match && inv.timeRange && currentMin >= inv.timeRange.start && currentMin < inv.timeRange.end) {
-          if (inv.price !== null && !inv.isFree) {
-            rate = inv.price;
-            isEnforced = true;
-          }
-          break;
-        }
-      }
-    }
-
-    const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-    const ampm = hour < 12 ? 'AM' : 'PM';
-    const label = `${hour12} ${ampm}`;
-
-    points.push({
-      hour,
-      label,
-      rate,
-      isEnforced,
-    });
-  }
-
-  return points;
+  return { minRate, maxRate, periods };
 }

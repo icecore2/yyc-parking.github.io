@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { ParkingZone, RateSnapshot } from '@/lib/parking/types';
 import { PROVIDERS } from '@/lib/parking/providers';
-import { parseRateSchedule } from '@/lib/parking/rate-parser';
+import { resolveRateAt, summarizeSchedule } from '@/lib/parking/rate-schedule';
+import { getCalgaryTime } from '@/lib/parking/calgary-clock';
 import RateCurveChart from './RateCurveChart';
 import { ExampleBadge } from '@/components/onboarding/ExampleDataBanner';
 import {
@@ -66,7 +67,13 @@ export default function ZoneDetailSheet({
   const [editSnapRate, setEditSnapRate] = useState('');
 
   const provider = PROVIDERS[zone.provider] || PROVIDERS.parkplus_on_street;
-  const { intervals } = parseRateSchedule(zone.enforceableHours);
+  const [now, setNow] = useState(() => getCalgaryTime());
+  useEffect(() => {
+    const id = setInterval(() => setNow(getCalgaryTime()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const live = resolveRateAt(zone.rateSchedule, now);
+  const { peakRate } = summarizeSchedule(zone.rateSchedule);
 
   const googleMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${zone.coordinates[1]},${zone.coordinates[0]}`;
 
@@ -305,16 +312,14 @@ export default function ZoneDetailSheet({
                       Current Live Rate
                     </span>
                     <Badge
-                      variant={zone.isCurrentlyFree ? 'success' : 'default'}
+                      variant={live.isFree ? 'success' : 'default'}
                       className="text-xs font-bold"
                     >
-                      {zone.isCurrentlyFree ? 'FREE PARKING' : `$${zone.activeRate.toFixed(2)} / hr`}
+                      {live.isFree ? 'FREE NOW' : live.statusText}
                     </Badge>
                   </div>
                   <div className="text-xs font-semibold text-foreground">
-                    {zone.isCurrentlyFree
-                      ? 'Outside Enforceable Hours / Free Parking'
-                      : `Active Daytime Rate: $${zone.activeRate.toFixed(2)}/hr`}
+                    {peakRate === 0 ? 'No paid periods posted' : `Peak $${peakRate.toFixed(2)}/hr`}
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-border">
                     <span>Price Tier:</span>
@@ -364,11 +369,14 @@ export default function ZoneDetailSheet({
                     <Clock className="h-3.5 w-3.5 text-primary" />
                     <span>Enforceable Schedule</span>
                   </div>
-                  <div className="text-xs font-semibold text-foreground">
-                    {zone.enforceableHours || '09:00 - 18:00 Mon-Sat'}
-                  </div>
+                  {zone.enforceableHours && (
+                    <div className="text-xs font-semibold text-foreground">{zone.enforceableHours}</div>
+                  )}
                   <div className="text-[11px] text-muted-foreground">
-                    Max stay duration: <strong className="text-foreground">{zone.maxStayHours || 3} Hours</strong>
+                    Max stay duration:{' '}
+                    <strong className="text-foreground">
+                      {zone.maxStayHours ? `${zone.maxStayHours} Hours` : 'Not posted'}
+                    </strong>
                   </div>
                 </CardContent>
               </Card>
@@ -397,7 +405,7 @@ export default function ZoneDetailSheet({
             {/* TAB 2: RATES */}
             <TabsContent value="rates" className="mt-0 flex flex-col gap-3">
               {/* Interactive 24-Hour Rate Curve Chart */}
-              <RateCurveChart intervals={intervals} />
+              <RateCurveChart schedule={zone.rateSchedule} initialDay={now.day} />
 
               {/* Schedule Windows Table */}
               <Card>
@@ -406,44 +414,43 @@ export default function ZoneDetailSheet({
                     Schedule Breakdown
                   </span>
                   <div className="space-y-1.5 divide-y divide-border text-xs">
-                    {intervals && intervals.length > 0 ? (
-                      intervals.map((int, i) => (
-                        <div key={i} className="pt-1.5 first:pt-0 flex items-center justify-between">
-                          <span className="text-muted-foreground">{int.header || 'Schedule Window'}</span>
-                          <span className="font-bold text-foreground">
-                            {int.isFree ? 'FREE' : int.price !== null ? `$${int.price.toFixed(2)}/hr` : int.rateText}
-                          </span>
-                        </div>
-                      ))
+                    {zone.rateSchedule && zone.rateSchedule.length > 0 ? (
+                      zone.rateSchedule.map((period, i) => {
+                        const isLive = period === live.period;
+                        const isFreePeriod = period.isFree || period.ratePerHour === 0;
+                        return (
+                          <div
+                            key={i}
+                            aria-current={isLive ? 'true' : undefined}
+                            className={`pt-1.5 first:pt-0 flex items-center justify-between ${
+                              isLive ? 'rounded-md bg-primary/10 px-1.5 -mx-1.5 font-semibold' : ''
+                            }`}
+                          >
+                            <span className={isLive ? 'text-foreground' : 'text-muted-foreground'}>
+                              {`${period.days} ${period.startTime}–${period.endTime}`}
+                            </span>
+                            <span className="font-bold text-foreground">
+                              {isFreePeriod ? 'FREE' : `$${period.ratePerHour.toFixed(2)}/hr`}
+                            </span>
+                          </div>
+                        );
+                      })
                     ) : (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">Mon - Fri (09:00 - 18:00)</span>
-                          <span className="font-bold text-foreground">${zone.activeRate.toFixed(2)}/hr</span>
-                        </div>
-                        <div className="pt-1.5 flex items-center justify-between">
-                          <span className="text-muted-foreground">Saturday (09:00 - 18:00)</span>
-                          <span className="font-bold text-foreground">
-                            ${Math.max(1.5, zone.activeRate - 1.0).toFixed(2)}/hr
-                          </span>
-                        </div>
-                        <div className="pt-1.5 flex items-center justify-between">
-                          <span className="text-muted-foreground">Sunday &amp; Stat Holidays</span>
-                          <Badge variant="success">FREE</Badge>
-                        </div>
-                      </>
+                      <div className="text-muted-foreground">No published rate schedule for this zone.</div>
                     )}
                   </div>
                 </CardContent>
               </Card>
 
               {/* Free Parking Times */}
-              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
-                <Info className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                <span>
-                  <strong>Tip:</strong> All Calgary on-street ParkPlus zones offer free parking on Sundays and statutory holidays!
-                </span>
-              </div>
+              {zone.provider === 'parkplus_on_street' && (
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+                  <Info className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <span>
+                    <strong>Tip:</strong> All Calgary on-street ParkPlus zones offer free parking on Sundays and statutory holidays!
+                  </span>
+                </div>
+              )}
             </TabsContent>
 
             {/* TAB 3: HISTORY */}
