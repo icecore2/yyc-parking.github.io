@@ -102,6 +102,18 @@ if (!process.execArgv.includes('--experimental-strip-types') && !process.feature
   assert.strictEqual(rateOf('$1.00 per Hour Max: 30 Min'), 1);
   assert.strictEqual(rateOf('$1.25 per hour:Max $10.25'), 1.25);
 
+  // F2: peakRate is kept next to the live activeRate; "max" mode reads the peak
+  const nightZone = rs.applyLiveRate({ id: 'z', rateSchedule: PP2, activeRate: 4.25, isCurrentlyFree: false }, at(3, 23));
+  assert.strictEqual(nightZone.activeRate, 0);
+  assert.strictEqual(nightZone.isCurrentlyFree, true);
+  assert.strictEqual(nightZone.peakRate, 4.25);
+  assert.strictEqual(rs.zoneRateForMode(nightZone, 'max'), 4.25);
+  assert.strictEqual(rs.zoneRateForMode(nightZone, 'live'), 0);
+  const noSchedule = rs.applyLiveRate({ id: 'n', rateSchedule: [], activeRate: 2, isCurrentlyFree: false }, at(3, 23));
+  assert.strictEqual(noSchedule.peakRate, 2);
+  assert.strictEqual(noSchedule.activeRate, 2);
+  assert.strictEqual(rs.zoneRateForMode({ activeRate: 3, isCurrentlyFree: false }, 'max'), 3);
+
   const fs = require('fs');
   const src = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
   const sheet = src('components/map/ZoneDetailSheet.tsx');
@@ -115,6 +127,27 @@ if (!process.execArgv.includes('--experimental-strip-types') && !process.feature
   // F1 wiring: the ArcGIS branch passes ENFORCEABLE_TIME to the parser
   const dataService = src('lib/parking/data-service.ts');
   assert.ok(/enforceableTime = attrs\.ENFORCEABLE_TIME/.test(dataService) && /parseRateSchedule\(htmlRates, enforceableTime\)/.test(dataService), 'ArcGIS branch passes ENFORCEABLE_TIME');
+  assert.ok(/applyLiveRate\(/.test(dataService), 'withLiveRates sets peakRate via applyLiveRate');
+
+  // F2: filters, sort and line colours honour rateMode; cost estimates use the peak
+  const page = src('app/app/page.tsx');
+  assert.ok(/zoneRateForMode\(zone, rateMode\)/.test(page), 'Price filter reads the rate for the current rateMode');
+  assert.ok(/zoneRateForMode\(a, rateMode\)/.test(page), 'Sort reads the rate for the current rateMode');
+  assert.ok(!/\.activeRate <= maxThreshold/.test(page));
+  const mapView = src('components/map/MapLibreView.tsx');
+  assert.ok(/zoneRateForMode\(z, rateMode\)/.test(mapView), 'Line colours read the rate for the current rateMode');
+  assert.ok(/hourlyRate: zone\.peakRate \?\? zone\.activeRate/.test(sheet), 'Favourite stores the peak rate');
+  const alarm = src('components/map/ParkingAlarmDialog.tsx');
+  assert.ok(/zone\.peakRate \?\? zone\.activeRate/.test(alarm), 'Alarm cost uses the peak rate');
+  assert.ok(!/durationHours \* zone\.activeRate/.test(alarm));
+  assert.ok(/matchedZone\.peakRate \?\? matchedZone\.activeRate/.test(src('components/onboarding/WalkthroughGuideModal.tsx')));
+
+  // F3: zones with no schedule read "See posted signs", not "FREE NOW"
+  const preview = src('components/map/ZonePreviewCard.tsx');
+  assert.ok(sheet.includes('See posted signs'), 'Sheet badge reads "See posted signs" without a schedule');
+  assert.ok(preview.includes('See posted signs'), 'Preview badge reads "See posted signs" without a schedule');
+  assert.ok(sheet.includes('No paid periods posted'));
+  assert.ok(sheet.includes('No published rate schedule for this zone.'));
 
   console.log('✓ rate-schedule: all assertions passed');
 })().catch((err) => { console.error(err); process.exit(1); });

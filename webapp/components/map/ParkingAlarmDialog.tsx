@@ -30,7 +30,9 @@ export default function ParkingAlarmDialog({ zone, onClose }: ParkingAlarmDialog
     const now = Date.now();
     const expiry = now + durationMinutes * 60 * 1000;
     const durationHours = durationMinutes / 60;
-    const totalCost = Number((durationHours * zone.activeRate).toFixed(2));
+    // Peak rate: a conservative estimate that does not drop to $0 outside paid hours
+    const hourlyRate = zone.peakRate ?? zone.activeRate;
+    const totalCost = Number((durationHours * hourlyRate).toFixed(2));
 
     const uid = user?.uid || profile?.uid || 'demo_user';
 
@@ -40,7 +42,7 @@ export default function ParkingAlarmDialog({ zone, onClose }: ParkingAlarmDialog
       address: zone.address,
       startTime: now,
       durationHours,
-      hourlyRate: zone.activeRate,
+      hourlyRate,
       totalCostDollars: totalCost,
       expiryTime: expiry,
       alertLeadMinutes: leadMinutes,

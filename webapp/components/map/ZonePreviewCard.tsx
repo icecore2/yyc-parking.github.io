@@ -32,6 +32,8 @@ export default function ZonePreviewCard({
       ? `${zone.stallCount} stalls`
       : zone.stallType || 'Parking';
   const live = resolveRateAt(zone.rateSchedule, getCalgaryTime());
+  // No published schedule (loading/taxi/no-parking zones): we can't say it's free.
+  const hasSchedule = (zone.rateSchedule?.length ?? 0) > 0;
 
   return (
     <div
@@ -45,8 +47,15 @@ export default function ZonePreviewCard({
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-bold text-sm text-foreground">{zone.title}</span>
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0">
-              {live.isFree ? 'FREE NOW' : live.statusText}
+            <span
+              className={cn(
+                'inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border shrink-0',
+                hasSchedule
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                  : 'bg-secondary text-secondary-foreground border-border'
+              )}
+            >
+              {!hasSchedule ? 'See posted signs' : live.isFree ? 'FREE NOW' : live.statusText}
             </span>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{zone.address}</p>

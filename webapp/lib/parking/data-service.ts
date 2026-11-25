@@ -1,6 +1,6 @@
 import { ParkingZone, ParkingZoneGeometry } from './types';
 import { parseRateSchedule } from './rate-parser';
-import { resolveRateAt } from './rate-schedule';
+import { applyLiveRate } from './rate-schedule';
 import { getCalgaryTime, type CalgaryTime } from './calgary-clock';
 import { getPrimaryPath, pointAlongPolyline } from './geometry';
 
@@ -317,14 +317,11 @@ export function getLastDataFetchTime(): number {
 
 /**
  * Returns copies of the zones with activeRate/isCurrentlyFree resolved from each zone's
- * rateSchedule at Calgary time t. Zones without a schedule pass through unchanged.
+ * rateSchedule at Calgary time t, and peakRate set to the schedule's highest paid rate.
+ * Zones without a schedule keep their stored rate, which also becomes their peakRate.
  */
 export function withLiveRates(zones: ParkingZone[], t: CalgaryTime): ParkingZone[] {
-  return zones.map((zone) => {
-    if (!zone.rateSchedule || zone.rateSchedule.length === 0) return zone;
-    const live = resolveRateAt(zone.rateSchedule, t);
-    return { ...zone, activeRate: live.rate, isCurrentlyFree: live.isFree };
-  });
+  return zones.map((zone) => applyLiveRate(zone, t));
 }
 
 export async function fetchCalgaryParkingZones(forceRefresh = false): Promise<ParkingZone[]> {

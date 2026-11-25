@@ -66,6 +66,7 @@ export interface ParkingZone {
   enforceableTime?: string;
   rateSchedule: RatePeriod[];
   activeRate: number; // Current hourly rate right now
+  peakRate?: number; // Highest paid rate in rateSchedule ("Peak Daytime Rate"), set by withLiveRates
   isCurrentlyFree: boolean;
   coordinates: [number, number]; // [lng, lat]
   geometry?: ParkingZoneGeometry;

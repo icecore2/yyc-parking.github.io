@@ -74,6 +74,8 @@ export default function ZoneDetailSheet({
   }, []);
   const live = resolveRateAt(zone.rateSchedule, now);
   const { peakRate } = summarizeSchedule(zone.rateSchedule);
+  // No published schedule (loading/taxi/no-parking zones): we can't say it's free.
+  const hasSchedule = (zone.rateSchedule?.length ?? 0) > 0;
 
   const googleMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${zone.coordinates[1]},${zone.coordinates[0]}`;
 
@@ -112,7 +114,7 @@ export default function ZoneDetailSheet({
         zoneId: canonicalZoneKey,
         label: zone.title,
         address: zone.address,
-        hourlyRate: zone.activeRate,
+        hourlyRate: zone.peakRate ?? zone.activeRate,
         coordinates: zone.coordinates,
         provider: zone.provider,
         createdAt: Date.now(),
@@ -312,10 +314,10 @@ export default function ZoneDetailSheet({
                       Current Live Rate
                     </span>
                     <Badge
-                      variant={live.isFree ? 'success' : 'default'}
+                      variant={!hasSchedule ? 'secondary' : live.isFree ? 'success' : 'default'}
                       className="text-xs font-bold"
                     >
-                      {live.isFree ? 'FREE NOW' : live.statusText}
+                      {!hasSchedule ? 'See posted signs' : live.isFree ? 'FREE NOW' : live.statusText}
                     </Badge>
                   </div>
                   <div className="text-xs font-semibold text-foreground">

@@ -11,6 +11,7 @@ import {
 } from 'maplibre-gl';
 import { ParkingZone, CustomLocation, BasemapId } from '@/lib/parking/types';
 import { PROVIDERS } from '@/lib/parking/providers';
+import { zoneRateForMode } from '@/lib/parking/rate-schedule';
 import { resolvePinAnchorCoordinates } from '@/lib/parking/geometry';
 import {
   PIN_CLUSTER_MAX_ZOOM,
@@ -519,10 +520,12 @@ export default function MapLibreView({
     const lineFeatures = zones
       .filter((z) => Boolean(z.geometry && z.geometry.coordinates && z.geometry.coordinates.length > 0))
       .map((z) => {
+        // Peak rate in "Peak Daytime Rate" mode, live rate in live mode
+        const rate = zoneRateForMode(z, rateMode);
         let color = '#059669'; // Green (Free)
-        if (!z.isCurrentlyFree) {
-          if (z.activeRate <= 2.5) color = '#2563eb'; // Blue
-          else if (z.activeRate <= 3.75) color = '#d97706'; // Amber
+        if (rate > 0) {
+          if (rate <= 2.5) color = '#2563eb'; // Blue
+          else if (rate <= 3.75) color = '#d97706'; // Amber
           else color = '#e11d48'; // Rose
         }
 
@@ -532,7 +535,7 @@ export default function MapLibreView({
             id: z.id,
             zoneNumber: z.zoneNumber || z.id,
             title: z.title,
-            rate: z.activeRate,
+            rate,
             color,
           },
           geometry: z.geometry!,
@@ -580,7 +583,7 @@ export default function MapLibreView({
         anchorSource.setData({ type: 'FeatureCollection', features: [] });
       }
     }
-  }, [zones, pinAnchorMap, mapStyleReady]);
+  }, [zones, pinAnchorMap, mapStyleReady, rateMode]);
 
   // Feed zone pins into the clustered GeoJSON source (supercluster runs in the map worker)
   useEffect(() => {

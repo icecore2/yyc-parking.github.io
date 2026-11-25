@@ -400,7 +400,7 @@ export default function WalkthroughGuideModal() {
         zoneId: matchedZone ? matchedZone.id : zoneNum,
         label: favLabelInput.trim() || (matchedZone ? matchedZone.title : `Zone #${zoneNum}`),
         address: matchedZone ? matchedZone.address : `Calgary Zone #${zoneNum}`,
-        hourlyRate: matchedZone ? matchedZone.activeRate : 3.5,
+        hourlyRate: matchedZone ? (matchedZone.peakRate ?? matchedZone.activeRate) : 3.5,
         coordinates: matchedZone ? matchedZone.coordinates : [-114.0719, 51.0447],
         provider: matchedZone ? matchedZone.provider : 'parkplus_on_street',
         notes: favNotesInput.trim() || undefined,

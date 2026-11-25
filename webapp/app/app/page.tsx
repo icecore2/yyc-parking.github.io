@@ -32,6 +32,7 @@ import {
   getLastDataFetchTime,
   SAMPLE_CALGARY_ZONES,
 } from '@/lib/parking/data-service';
+import { zoneRateForMode } from '@/lib/parking/rate-schedule';
 
 const MapLibreView = dynamic(() => import('@/components/map/MapLibreView'), {
   ssr: false,
@@ -351,10 +352,10 @@ export default function MapAppPage() {
     // 4. Price Threshold Filter
     if (priceFilter !== 'ALL') {
       if (priceFilter === 'free') {
-        result = result.filter((zone) => zone.isCurrentlyFree || zone.activeRate === 0);
+        result = result.filter((zone) => zoneRateForMode(zone, rateMode) === 0);
       } else {
         const maxThreshold = parseFloat(priceFilter);
-        result = result.filter((zone) => zone.activeRate <= maxThreshold);
+        result = result.filter((zone) => zoneRateForMode(zone, rateMode) <= maxThreshold);
       }
     }
 
@@ -371,8 +372,9 @@ export default function MapAppPage() {
       result.sort((a, b) => {
         const distA = a.distanceToTarget || 0;
         const distB = b.distanceToTarget || 0;
-        const rateA = rateMode === 'live' && a.isCurrentlyFree ? 0 : a.activeRate;
-        const rateB = rateMode === 'live' && b.isCurrentlyFree ? 0 : b.activeRate;
+        // Peak rate in "Peak Daytime Rate" mode, live rate in live mode
+        const rateA = zoneRateForMode(a, rateMode);
+        const rateB = zoneRateForMode(b, rateMode);
 
         if (sortMode === 'cheapest') {
           return rateA - rateB || distA - distB;

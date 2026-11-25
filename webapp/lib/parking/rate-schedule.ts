@@ -1,4 +1,4 @@
-import type { RatePeriod, HourlyRatePoint } from './types';
+import type { RatePeriod, HourlyRatePoint, ParkingZone } from './types';
 import type { CalgaryTime } from './calgary-clock';
 
 const DAY_SETS: Record<string, number[]> = {
@@ -66,4 +66,33 @@ export function summarizeSchedule(schedule: RatePeriod[] | undefined): { peakRat
   const rates = (schedule ?? []).filter(isPaid).map((p) => p.ratePerHour);
   if (rates.length === 0) return { peakRate: 0, minPaidRate: 0 };
   return { peakRate: Math.max(...rates), minPaidRate: Math.min(...rates) };
+}
+
+type LiveRateFields = Pick<ParkingZone, 'activeRate' | 'isCurrentlyFree'> & { peakRate?: number };
+
+/**
+ * Copy of the zone with activeRate/isCurrentlyFree resolved at Calgary time t and
+ * peakRate set to the schedule's highest paid rate. A zone without a schedule keeps
+ * its stored rate, which also becomes its peakRate.
+ */
+export function applyLiveRate<Z extends LiveRateFields & { rateSchedule?: RatePeriod[] }>(zone: Z, t: CalgaryTime): Z {
+  if (!zone.rateSchedule || zone.rateSchedule.length === 0) {
+    return zone.peakRate === zone.activeRate ? zone : { ...zone, peakRate: zone.activeRate };
+  }
+  const live = resolveRateAt(zone.rateSchedule, t);
+  return {
+    ...zone,
+    activeRate: live.rate,
+    isCurrentlyFree: live.isFree,
+    peakRate: summarizeSchedule(zone.rateSchedule).peakRate,
+  };
+}
+
+/**
+ * The hourly rate a zone is ranked, filtered and coloured by: the peak in "max"
+ * ("Peak Daytime Rate") mode, the live rate in "live" mode.
+ */
+export function zoneRateForMode(zone: LiveRateFields, mode: 'max' | 'live'): number {
+  if (mode === 'live') return zone.isCurrentlyFree ? 0 : zone.activeRate;
+  return zone.peakRate ?? zone.activeRate;
 }
