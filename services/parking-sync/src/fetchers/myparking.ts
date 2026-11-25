@@ -150,9 +150,7 @@ export class MyParkingFetcher extends BaseProviderFetcher {
           brz: attrs.BRZ_NAME ? String(attrs.BRZ_NAME).trim() : 'None',
           priceZone: attrs.PRICE_ZONE ? String(attrs.PRICE_ZONE).trim() : 'Standard',
           maxStayHours: attrs.MAX_TIME ? Number(attrs.MAX_TIME) : undefined,
-          enforceableHours: attrs.ENFORCEABLE_TIME
-            ? String(attrs.ENFORCEABLE_TIME).trim()
-            : '09:00 - 18:00 Mon-Sat',
+          enforceableHours: enforceableTime,
           activeRate,
           isCurrentlyFree,
           rateSchedule: periods,

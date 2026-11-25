@@ -342,6 +342,28 @@ assert.strictEqual(rateOf('$0.50 per 15 Min'), 2);
 assert.strictEqual(rateOf('$1.00 per Hour Max: 30 Min'), 1);
 assert.strictEqual(rateOf('$1.25 per hour:Max $10.25'), 1.25);
 
+// MyParkingFetcher passes ENFORCEABLE_TIME to the parser and never invents enforceable hours
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async () => new Response(JSON.stringify({
+  features: [
+    { attributes: { OBJECTID: 67, PARKING_ZONE: '67', HTML_ZONE_RATE: PARKPLUS_67_HTML, ENFORCEABLE_TIME: '1110-1520 MON-FRI, 0910-1750 SAT' }, geometry: { paths: [[[-114.07, 51.04], [-114.06, 51.04]]] } },
+    { attributes: { OBJECTID: 68, PARKING_ZONE: '68', HTML_ZONE_RATE: PARKPLUS_2_HTML }, geometry: { paths: [[[-114.07, 51.05], [-114.06, 51.05]]] } },
+  ],
+}), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof fetch;
+try {
+  const stubbed = await new MyParkingFetcher('https://example.invalid/arcgis').fetchRecords();
+  const z67 = stubbed.find((r) => r.id === 'parkplus_67');
+  const z68 = stubbed.find((r) => r.id === 'parkplus_68');
+  assert.deepStrictEqual(z67?.rateSchedule.slice(0, 2), [
+    { days: 'Mon-Fri', startTime: '11:10', endTime: '15:20', ratePerHour: 1.25, isFree: false },
+    { days: 'Saturday', startTime: '09:10', endTime: '17:50', ratePerHour: 0.5, isFree: false },
+  ]);
+  assert.strictEqual(z67?.enforceableHours, '1110-1520 MON-FRI, 0910-1750 SAT');
+  assert.strictEqual(z68?.enforceableHours, undefined, 'No ENFORCEABLE_TIME -> enforceableHours undefined');
+} finally {
+  globalThis.fetch = realFetch;
+}
+
 console.log('  ✔ ParkPlus headers parse days/times; non-rate pairs are dropped.\n');
 
 localDb.close();
