@@ -20,6 +20,17 @@ interface AuthModalProps {
   defaultMode?: 'signin' | 'signup';
 }
 
+function friendlyAuthError(err: unknown, fallback: string): string {
+  const code =
+    err && typeof err === 'object' && 'code' in err
+      ? String((err as { code: unknown }).code)
+      : '';
+  if (code === 'auth/firebase-app-check-token-is-invalid' || code.startsWith('appCheck/')) {
+    return "We couldn't verify your browser. Please refresh the page and try again.";
+  }
+  return err instanceof Error ? err.message : fallback;
+}
+
 export default function AuthModal({ onClose, defaultMode = 'signin' }: AuthModalProps) {
   const { signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth();
   const [isSignUp, setIsSignUp] = useState(defaultMode === 'signup');
@@ -43,8 +54,7 @@ export default function AuthModal({ onClose, defaultMode = 'signin' }: AuthModal
       onClose();
     } catch (err: unknown) {
       console.error(err);
-      const message = err instanceof Error ? err.message : 'Failed to authenticate. Please check your credentials.';
-      setError(message);
+      setError(friendlyAuthError(err, 'Failed to authenticate. Please check your credentials.'));
     } finally {
       setLoading(false);
     }
@@ -58,8 +68,7 @@ export default function AuthModal({ onClose, defaultMode = 'signin' }: AuthModal
       onClose();
     } catch (err: unknown) {
       console.error(err);
-      const message = err instanceof Error ? err.message : 'Google sign in was cancelled or failed.';
-      setError(message);
+      setError(friendlyAuthError(err, 'Google sign in was cancelled or failed.'));
     } finally {
       setLoading(false);
     }
@@ -216,6 +225,28 @@ export default function AuthModal({ onClose, defaultMode = 'signin' }: AuthModal
             </p>
           )}
         </div>
+
+        <p className="text-center text-[10px] text-muted-foreground">
+          This site is protected by reCAPTCHA and the Google{' '}
+          <a
+            href="https://policies.google.com/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-foreground"
+          >
+            Privacy Policy
+          </a>{' '}
+          and{' '}
+          <a
+            href="https://policies.google.com/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-foreground"
+          >
+            Terms of Service
+          </a>{' '}
+          apply.
+        </p>
       </DialogContent>
     </Dialog>
   );

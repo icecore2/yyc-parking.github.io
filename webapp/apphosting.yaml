@@ -38,3 +38,9 @@ env:
     availability:
       - BUILD
       - RUNTIME
+  # Set to the reCAPTCHA Enterprise website key registered with Firebase App Check
+  - variable: NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY
+    value: ""
+    availability:
+      - BUILD
+      - RUNTIME

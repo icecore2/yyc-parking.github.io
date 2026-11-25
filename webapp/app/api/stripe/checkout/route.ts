@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { stripe, STRIPE_PLANS } from '@/lib/stripe/stripe';
+import { verifyAppCheckRequest } from '@/lib/firebase/verify-app-check';
 
 export async function POST(req: NextRequest) {
+  const denied = await verifyAppCheckRequest(req);
+  if (denied) return denied;
+
   try {
     const { userId, plan } = await req.json();
 
