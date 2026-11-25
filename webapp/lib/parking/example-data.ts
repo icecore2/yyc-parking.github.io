@@ -2,6 +2,7 @@ import {
   CustomLocation,
   ParkingSession,
   RateSnapshot,
+  UserPriceReport,
   UserFavoriteSpot,
   UserOnboardingState,
   UserVehicle,
@@ -127,6 +128,37 @@ export function createExampleRateSnapshots(activeRate: number): RateSnapshot[] {
       id: 'example_snap_live',
       period: 'Current Live Rate',
       rate: activeRate,
+      isExample: true,
+    },
+  ];
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Example posted prices, derived from the example snapshots, shown until dismissed. */
+export function createExamplePriceReports(
+  zoneId: string,
+  activeRate: number,
+  now: number = Date.now()
+): UserPriceReport[] {
+  const [base, live] = createExampleRateSnapshots(activeRate);
+  return [
+    {
+      id: base.id,
+      zoneId,
+      rate: base.rate,
+      note: base.period,
+      observedAt: now - 60 * DAY_MS,
+      createdAt: now - 60 * DAY_MS,
+      isExample: true,
+    },
+    {
+      id: live.id,
+      zoneId,
+      rate: live.rate,
+      note: live.period,
+      observedAt: now - DAY_MS,
+      createdAt: now - DAY_MS,
       isExample: true,
     },
   ];

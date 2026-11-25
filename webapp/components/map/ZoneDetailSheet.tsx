@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ParkingZone, RateSnapshot } from '@/lib/parking/types';
+import { OfficialRatePoint, ParkingZone, UserPriceReport } from '@/lib/parking/types';
 import { PROVIDERS } from '@/lib/parking/providers';
 import { resolveRateAt, summarizeSchedule } from '@/lib/parking/rate-schedule';
 import { getCalgaryTime } from '@/lib/parking/calgary-clock';
 import RateCurveChart from './RateCurveChart';
+import PriceHistoryChart from './PriceHistoryChart';
 import { ExampleBadge } from '@/components/onboarding/ExampleDataBanner';
 import {
   Navigation,
@@ -17,18 +18,21 @@ import {
   Focus,
   Footprints,
   Info,
-  Camera,
+  Plus,
   Pencil,
   Trash2,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/lib/firebase/auth-context';
 import {
-  createRateSnapshot,
+  createPriceReport,
+  deleteUserPriceReport,
+  dismissPriceReportExamples,
   getUserFavorites,
-  getZoneRateSnapshots,
+  getUserPriceReports,
   saveUserFavorite,
-  saveZoneRateSnapshots,
+  saveUserPriceReport,
+  updateUserPriceReport,
 } from '@/lib/firebase/firestore';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
@@ -46,6 +50,25 @@ interface ZoneDetailSheetProps {
 
 type TabType = 'overview' | 'rates' | 'history' | 'rules';
 
+function toDateInputValue(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Parses a yyyy-mm-dd input as local noon; today's date maps to "now". */
+function fromDateInputValue(value: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return null;
+  if (value === toDateInputValue(Date.now())) return Date.now();
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0);
+  return Number.isFinite(d.getTime()) ? d.getTime() : null;
+}
+
+function formatReportDate(ms: number): string {
+  return new Date(ms).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 export default function ZoneDetailSheet({
   zone,
   onClose,
@@ -59,12 +82,18 @@ export default function ZoneDetailSheet({
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [isSaved, setIsSaved] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
-  const [savedSnapshots, setSavedSnapshots] = useState<RateSnapshot[]>(() =>
-    getZoneRateSnapshots(uid, canonicalZoneKey, zone.activeRate)
-  );
-  const [editingSnapshotId, setEditingSnapshotId] = useState<string | null>(null);
-  const [editSnapPeriod, setEditSnapPeriod] = useState('');
-  const [editSnapRate, setEditSnapRate] = useState('');
+  // Per-user posted prices (private) and the official server-side history are kept apart:
+  // posting a price only writes under users/{uid}/price_reports.
+  const [priceReports, setPriceReports] = useState<UserPriceReport[]>([]);
+  const [officialHistory, setOfficialHistory] = useState<OfficialRatePoint[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [showPostForm, setShowPostForm] = useState(false);
+  const [postRate, setPostRate] = useState('');
+  const [postNote, setPostNote] = useState('');
+  const [postDate, setPostDate] = useState('');
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [editNote, setEditNote] = useState('');
+  const [editRate, setEditRate] = useState('');
 
   const provider = PROVIDERS[zone.provider] || PROVIDERS.parkplus_on_street;
   const [now, setNow] = useState(() => getCalgaryTime());
@@ -138,63 +167,89 @@ export default function ZoneDetailSheet({
     onOpenAlarm(zone);
   };
 
-  const handleTakeSnapshot = () => {
-    const now = new Date();
-    const timeStr = now.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
+  const reloadPriceReports = React.useCallback(async () => {
+    const reports = await getUserPriceReports(uid, canonicalZoneKey, zone.activeRate);
+    setPriceReports(reports);
+  }, [uid, canonicalZoneKey, zone.activeRate]);
+
+  // Load history data lazily, the first time the History tab is opened for this zone.
+  useEffect(() => {
+    if (activeTab !== 'history') return;
+    let cancelled = false;
+    getUserPriceReports(uid, canonicalZoneKey, zone.activeRate).then((reports) => {
+      if (!cancelled) setPriceReports(reports);
     });
-    const nextSnapshot: RateSnapshot = {
-      id: `snap_${now.getTime()}`,
-      period: timeStr,
-      rate: zone.activeRate,
-      createdAt: now.getTime(),
-      isExample: false,
+    fetch(`/api/parking/history?zoneId=${encodeURIComponent(zone.id)}`)
+      .then((res) => (res.ok ? res.json() : { points: [] }))
+      .then((json: { points?: OfficialRatePoint[] }) => {
+        if (!cancelled) setOfficialHistory(Array.isArray(json.points) ? json.points : []);
+      })
+      .catch(() => {
+        if (!cancelled) setOfficialHistory([]);
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoaded(true);
+      });
+    return () => {
+      cancelled = true;
     };
-    const next = [...savedSnapshots, nextSnapshot];
-    setSavedSnapshots(next);
-    saveZoneRateSnapshots(uid, canonicalZoneKey, next);
+  }, [activeTab, uid, canonicalZoneKey, zone.id, zone.activeRate]);
+
+  const openPostForm = () => {
+    setPostRate(zone.activeRate.toFixed(2));
+    setPostNote('');
+    setPostDate(toDateInputValue(Date.now()));
+    setShowPostForm(true);
   };
 
-  const handleClearExampleSnapshots = () => {
-    const next = savedSnapshots.filter((s) => !s.isExample);
-    setSavedSnapshots(next);
-    saveZoneRateSnapshots(uid, canonicalZoneKey, next, true);
+  const handlePostPrice = async () => {
+    const rate = parseFloat(postRate);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 1000) return;
+    const observedAt = fromDateInputValue(postDate) ?? Date.now();
+    const report = createPriceReport(canonicalZoneKey, { rate, note: postNote, observedAt });
+    await saveUserPriceReport(uid, report);
+    setShowPostForm(false);
+    await reloadPriceReports();
   };
 
-  const startEditSnapshot = (snap: RateSnapshot) => {
-    setEditingSnapshotId(snap.id);
-    setEditSnapPeriod(snap.period);
-    setEditSnapRate(snap.rate.toFixed(2));
+  const handleClearExampleReports = async () => {
+    dismissPriceReportExamples(uid, canonicalZoneKey);
+    await reloadPriceReports();
   };
 
-  const handleSaveSnapshotEdit = (orig: RateSnapshot) => {
-    const parsedRate = parseFloat(editSnapRate);
-    if (!editSnapPeriod.trim() || !Number.isFinite(parsedRate) || parsedRate < 0) return;
-
-    const updatedSnap: RateSnapshot = orig.isExample
-      ? createRateSnapshot(editSnapPeriod, parsedRate, orig.createdAt)
-      : {
-          ...orig,
-          period: editSnapPeriod.trim(),
-          rate: Number(parsedRate.toFixed(2)),
-          isExample: false,
-        };
-
-    const next = savedSnapshots.map((s) => (s.id === orig.id ? updatedSnap : s));
-    const hasRemainingExample = next.some((s) => s.isExample);
-    setSavedSnapshots(next);
-    saveZoneRateSnapshots(uid, canonicalZoneKey, next, !hasRemainingExample);
-    setEditingSnapshotId(null);
+  const startEditReport = (report: UserPriceReport) => {
+    setEditingReportId(report.id);
+    setEditNote(report.note || '');
+    setEditRate(report.rate.toFixed(2));
   };
 
-  const handleDeleteSnapshot = (snap: RateSnapshot) => {
-    const next = savedSnapshots.filter((s) => s.id !== snap.id);
-    const hasRemainingExample = next.some((s) => s.isExample);
-    setSavedSnapshots(next);
-    saveZoneRateSnapshots(uid, canonicalZoneKey, next, !hasRemainingExample);
+  const handleSaveReportEdit = async (orig: UserPriceReport) => {
+    const rate = parseFloat(editRate);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 1000) return;
+
+    if (orig.isExample) {
+      // Editing an example turns it into a real report and retires the examples.
+      const created = createPriceReport(canonicalZoneKey, {
+        rate,
+        note: editNote,
+        observedAt: orig.observedAt,
+      });
+      await saveUserPriceReport(uid, created);
+      dismissPriceReportExamples(uid, canonicalZoneKey);
+    } else {
+      await updateUserPriceReport(uid, orig, { rate, note: editNote });
+    }
+    setEditingReportId(null);
+    await reloadPriceReports();
+  };
+
+  const handleDeleteReport = async (report: UserPriceReport) => {
+    if (report.isExample) {
+      dismissPriceReportExamples(uid, canonicalZoneKey);
+    } else {
+      await deleteUserPriceReport(uid, report.id);
+    }
+    await reloadPriceReports();
   };
 
   useEffect(() => {
@@ -457,63 +512,129 @@ export default function ZoneDetailSheet({
 
             {/* TAB 3: HISTORY */}
             <TabsContent value="history" className="mt-0 flex flex-col gap-3">
+              <PriceHistoryChart
+                official={officialHistory}
+                currentRate={zone.activeRate}
+                mine={priceReports}
+              />
+              {!historyLoaded && (
+                <p className="text-[10px] text-muted-foreground -mt-1">Loading official history…</p>
+              )}
+
               <Card>
                 <CardContent className="p-3.5 flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      Rate Audit History
+                      My Posted Prices
                     </span>
                     <div className="flex items-center gap-1">
-                      {savedSnapshots.some((s) => s.isExample) && (
+                      {priceReports.some((r) => r.isExample) && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={handleClearExampleSnapshots}
+                          onClick={handleClearExampleReports}
                           className="h-7 text-[11px] text-muted-foreground hover:text-destructive"
                         >
                           Clear Examples
                         </Button>
                       )}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleTakeSnapshot}
-                        className="h-7 text-[11px] gap-1 text-primary"
-                      >
-                        <Camera className="w-3 h-3" />
-                        Take Snapshot
-                      </Button>
+                      {!showPostForm && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={openPostForm}
+                          className="h-7 text-[11px] gap-1 text-primary"
+                        >
+                          <Plus className="w-3 h-3" />
+                          Post a price
+                        </Button>
+                      )}
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Track price fluctuations in this parking zone. Edit or replace example baseline rows, or capture live rate snapshots.
+                    Log what you actually paid here. Only you can see these, and they never change the official rate.
                   </p>
+
+                  {showPostForm && (
+                    <div className="flex flex-col gap-1.5 rounded-xl border border-border p-2" data-testid="post-price-form">
+                      <div className="flex gap-1.5">
+                        <Input
+                          type="number"
+                          step="0.25"
+                          min="0"
+                          max="1000"
+                          value={postRate}
+                          onChange={(e) => setPostRate(e.target.value)}
+                          className="h-7 text-xs w-20"
+                          aria-label="Price per hour"
+                        />
+                        <Input
+                          type="text"
+                          maxLength={200}
+                          value={postNote}
+                          onChange={(e) => setPostNote(e.target.value)}
+                          className="h-7 text-xs flex-1"
+                          placeholder="Note (e.g. Flames game)"
+                          aria-label="Note"
+                        />
+                        <Input
+                          type="date"
+                          value={postDate}
+                          onChange={(e) => setPostDate(e.target.value)}
+                          className="h-7 text-xs w-32"
+                          aria-label="Date"
+                        />
+                      </div>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowPostForm(false)}
+                          className="h-6 text-[11px]"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="emerald"
+                          size="sm"
+                          onClick={handlePostPrice}
+                          className="h-6 text-[11px]"
+                        >
+                          Post
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-1.5 divide-y divide-border text-xs mt-1">
-                    {savedSnapshots.length === 0 ? (
+                    {priceReports.length === 0 ? (
                       <div className="py-3 text-center text-[11px] text-muted-foreground">
-                        No snapshots recorded. Click &quot;Take Snapshot&quot; above to log the current rate.
+                        You haven&apos;t posted a price for this zone yet.
                       </div>
                     ) : (
-                      savedSnapshots.map((item) => (
+                      [...priceReports].reverse().map((item) => (
                         <div key={item.id} className="pt-2 first:pt-0">
-                          {editingSnapshotId === item.id ? (
+                          {editingReportId === item.id ? (
                             <div className="flex flex-col gap-1.5 py-1">
                               <div className="flex gap-1.5">
                                 <Input
                                   type="text"
-                                  value={editSnapPeriod}
-                                  onChange={(e) => setEditSnapPeriod(e.target.value)}
+                                  maxLength={200}
+                                  value={editNote}
+                                  onChange={(e) => setEditNote(e.target.value)}
                                   className="h-7 text-xs flex-1"
-                                  placeholder="Label (e.g. Nov Peak)"
+                                  placeholder="Note"
                                 />
                                 <Input
                                   type="number"
                                   step="0.25"
                                   min="0"
-                                  value={editSnapRate}
-                                  onChange={(e) => setEditSnapRate(e.target.value)}
+                                  value={editRate}
+                                  onChange={(e) => setEditRate(e.target.value)}
                                   className="h-7 text-xs w-20"
                                 />
                               </div>
@@ -522,7 +643,7 @@ export default function ZoneDetailSheet({
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => setEditingSnapshotId(null)}
+                                  onClick={() => setEditingReportId(null)}
                                   className="h-6 text-[11px]"
                                 >
                                   Cancel
@@ -531,7 +652,7 @@ export default function ZoneDetailSheet({
                                   type="button"
                                   variant="emerald"
                                   size="sm"
-                                  onClick={() => handleSaveSnapshotEdit(item)}
+                                  onClick={() => handleSaveReportEdit(item)}
                                   className="h-6 text-[11px]"
                                 >
                                   Save
@@ -541,7 +662,10 @@ export default function ZoneDetailSheet({
                           ) : (
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="text-muted-foreground truncate">{item.period}</span>
+                                <span className="text-muted-foreground truncate">
+                                  {formatReportDate(item.observedAt)}
+                                  {item.note ? ` · ${item.note}` : ''}
+                                </span>
                                 {item.isExample && <ExampleBadge label="Example" />}
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
@@ -552,8 +676,8 @@ export default function ZoneDetailSheet({
                                   type="button"
                                   variant="ghost"
                                   size="iconSm"
-                                  onClick={() => startEditSnapshot(item)}
-                                  title="Edit snapshot"
+                                  onClick={() => startEditReport(item)}
+                                  title="Edit price"
                                   className="h-6 w-6 text-muted-foreground hover:text-foreground"
                                 >
                                   <Pencil className="w-3 h-3" />
@@ -562,8 +686,8 @@ export default function ZoneDetailSheet({
                                   type="button"
                                   variant="ghost"
                                   size="iconSm"
-                                  onClick={() => handleDeleteSnapshot(item)}
-                                  title="Delete snapshot"
+                                  onClick={() => handleDeleteReport(item)}
+                                  title="Delete price"
                                   className="h-6 w-6 text-muted-foreground hover:text-destructive"
                                 >
                                   <Trash2 className="w-3 h-3" />

@@ -366,5 +366,36 @@ try {
 
 console.log('  ✔ ParkPlus headers parse days/times; non-rate pairs are dropped.\n');
 
+// 7. Official rate history: one point per schedule change, never on unchanged runs
+console.log('📋 Test 7: Official rate history appends only on rate-schedule changes...');
+const historyDb = new LocalParkingDatabase({ dbPath: ':memory:' });
+const historyRemote = new MockRemoteAdapter();
+
+const firstHistory = historyDb.appendRateHistory([testRec1, testRec2], 1000);
+assert.strictEqual(firstHistory.length, 2, 'First observation of each zone creates a point');
+await historyRemote.pushRateHistory(firstHistory);
+
+const repeatHistory = historyDb.appendRateHistory([testRec1, testRec2], 2000);
+assert.strictEqual(repeatHistory.length, 0, 'Same schedule twice must not add a point');
+
+const freeFlip = historyDb.appendRateHistory([{ ...testRec1, isCurrentlyFree: !testRec1.isCurrentlyFree }], 2500);
+assert.strictEqual(freeFlip.length, 0, 'isCurrentlyFree changes must not add a point');
+
+const changedHistory = historyDb.appendRateHistory([modifiedRec1, testRec2], 3000);
+assert.strictEqual(changedHistory.length, 1, 'Only the zone whose rate changed gets a new point');
+assert.strictEqual(changedHistory[0].zoneId, testRec1.id);
+assert.strictEqual(changedHistory[0].activeRate, 4.5);
+await historyRemote.pushRateHistory(changedHistory);
+
+const rec1History = historyDb.getRateHistory(testRec1.id);
+assert.strictEqual(rec1History.length, 2, 'Changed schedule leaves two points');
+assert.deepStrictEqual(rec1History.map((p) => p.recordedAt), [1000, 3000]);
+assert.strictEqual(historyDb.getRateHistory(testRec2.id).length, 1);
+
+assert.strictEqual(historyRemote.getHistory(testRec1.id).length, 2, 'Remote receives each new point once');
+assert.strictEqual(historyRemote.getHistory(testRec2.id).length, 1, 'Remote receives only new points');
+historyDb.close();
+console.log('  ✔ Rate history dedupes by schedule hash; remote receives only new points.\n');
+
 localDb.close();
 console.log('🎉 ALL SYNC & PUSH ENGINE TESTS PASSED CLEANLY!\n');

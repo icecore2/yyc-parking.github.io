@@ -25,6 +25,40 @@ function stableStringify(obj: unknown): string {
 }
 
 /**
+ * Hash of only the price-relevant fields (rate schedule + active rate). Used to decide
+ * whether a new official rate-history point is needed. Excludes isCurrentlyFree and
+ * other non-price fields so unrelated edits don't create history points.
+ */
+export function computeRateScheduleHash(
+  record: Pick<NormalizedParkingRecord, 'activeRate' | 'rateSchedule'>
+): string {
+  const canonical = {
+    activeRate: Number(Number(record.activeRate || 0).toFixed(2)),
+    rateSchedule: Array.isArray(record.rateSchedule)
+      ? record.rateSchedule.map((p) => ({
+          days: String(p.days || ''),
+          startTime: String(p.startTime || ''),
+          endTime: String(p.endTime || ''),
+          ratePerHour: Number(Number(p.ratePerHour || 0).toFixed(2)),
+          isFree: Boolean(p.isFree),
+        }))
+      : [],
+  };
+  return crypto.createHash('sha256').update(stableStringify(canonical)).digest('hex');
+}
+
+/** Highest hourly rate in the schedule, or activeRate when the schedule is empty. */
+export function computePeakRate(
+  record: Pick<NormalizedParkingRecord, 'activeRate' | 'rateSchedule'>
+): number {
+  const rates = (record.rateSchedule || [])
+    .map((p) => Number(p.ratePerHour))
+    .filter((r) => Number.isFinite(r));
+  const peak = rates.length > 0 ? Math.max(...rates) : Number(record.activeRate || 0);
+  return Number(peak.toFixed(2));
+}
+
+/**
  * Computes a deterministic SHA-256 canonical hash of the critical fields of a parking record.
  * Both local records and remote records must be passed through this function so hash comparison is exact.
  */

@@ -2,7 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { NormalizedParkingRecord, ProviderName } from '../types.ts';
+import type { NormalizedParkingRecord, ProviderName, RateHistoryPoint } from '../types.ts';
+import { computePeakRate, computeRateScheduleHash } from '../utils/hasher.ts';
 
 export interface LocalDbOptions {
   dbPath?: string; // e.g. path to file or ':memory:'
@@ -63,6 +64,16 @@ export class LocalParkingDatabase {
       CREATE INDEX IF NOT EXISTS idx_lpz_provider_name ON local_parking_zones(provider_name);
       CREATE INDEX IF NOT EXISTS idx_lpz_content_hash ON local_parking_zones(content_hash);
       CREATE INDEX IF NOT EXISTS idx_lpz_sync_status ON local_parking_zones(remote_sync_status);
+
+      CREATE TABLE IF NOT EXISTS rate_history (
+        zone_id TEXT NOT NULL,
+        recorded_at INTEGER NOT NULL,
+        active_rate REAL NOT NULL,
+        peak_rate REAL NOT NULL,
+        schedule_hash TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_rate_history_zone ON rate_history(zone_id, recorded_at);
     `);
   }
 
@@ -275,6 +286,68 @@ export class LocalParkingDatabase {
       pending: pendingRow.cnt,
       byProvider,
     };
+  }
+
+  /**
+   * Appends an official rate-history point for each record whose rate schedule is new
+   * or differs from its latest recorded point. Returns only the inserted points.
+   */
+  public appendRateHistory(
+    records: NormalizedParkingRecord[],
+    now: number = Date.now()
+  ): RateHistoryPoint[] {
+    const latestStmt = this.db.prepare(
+      'SELECT schedule_hash FROM rate_history WHERE zone_id = ? ORDER BY recorded_at DESC, rowid DESC LIMIT 1'
+    );
+    const insertStmt = this.db.prepare(
+      'INSERT INTO rate_history (zone_id, recorded_at, active_rate, peak_rate, schedule_hash) VALUES (?, ?, ?, ?, ?)'
+    );
+
+    const inserted: RateHistoryPoint[] = [];
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      for (const rec of records) {
+        const scheduleHash = computeRateScheduleHash(rec);
+        const latest = latestStmt.get(rec.id) as { schedule_hash: string } | undefined;
+        if (latest && latest.schedule_hash === scheduleHash) continue;
+
+        const point: RateHistoryPoint = {
+          zoneId: rec.id,
+          recordedAt: now,
+          activeRate: Number(Number(rec.activeRate || 0).toFixed(2)),
+          peakRate: computePeakRate(rec),
+          scheduleHash,
+        };
+        insertStmt.run(point.zoneId, point.recordedAt, point.activeRate, point.peakRate, point.scheduleHash);
+        inserted.push(point);
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+    return inserted;
+  }
+
+  public getRateHistory(zoneId: string): RateHistoryPoint[] {
+    const rows = this.db
+      .prepare(
+        'SELECT zone_id, recorded_at, active_rate, peak_rate, schedule_hash FROM rate_history WHERE zone_id = ? ORDER BY recorded_at ASC, rowid ASC'
+      )
+      .all(zoneId) as {
+      zone_id: string;
+      recorded_at: number;
+      active_rate: number;
+      peak_rate: number;
+      schedule_hash: string;
+    }[];
+    return rows.map((r) => ({
+      zoneId: r.zone_id,
+      recordedAt: Number(r.recorded_at),
+      activeRate: Number(r.active_rate),
+      peakRate: Number(r.peak_rate),
+      scheduleHash: r.schedule_hash,
+    }));
   }
 
   public close(): void {

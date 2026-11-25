@@ -1,5 +1,5 @@
 import type { RemoteDatabaseAdapter } from './adapter.ts';
-import type { NormalizedParkingRecord, ProviderName } from '../types.ts';
+import type { NormalizedParkingRecord, ProviderName, RateHistoryPoint } from '../types.ts';
 
 export interface FirestoreAdapterOptions {
   projectId?: string;
@@ -11,6 +11,8 @@ export interface FirestoreAdapterOptions {
 export class FirestoreRemoteAdapter implements RemoteDatabaseAdapter {
   private collectionName: string;
   private db: any = null;
+  private admin: any = null;
+  private historyCollectionName = 'parking_rate_history';
   private isConfigured = false;
 
   constructor(options: FirestoreAdapterOptions = {}) {
@@ -35,6 +37,7 @@ export class FirestoreRemoteAdapter implements RemoteDatabaseAdapter {
             });
           }
           this.db = admin.firestore();
+          this.admin = admin;
           this.isConfigured = true;
         }
       } catch (err) {
@@ -145,6 +148,54 @@ export class FirestoreRemoteAdapter implements RemoteDatabaseAdapter {
       written += chunk.length;
     }
 
+    return written;
+  }
+
+  async pushRateHistory(points: RateHistoryPoint[]): Promise<number> {
+    if (points.length === 0) return 0;
+    if (!this.db || !this.admin) {
+      console.log(
+        `[${this.getName()}] Simulated Push: Would append ${points.length} rate-history point(s) to '${this.historyCollectionName}'.`
+      );
+      return points.length;
+    }
+
+    const { FieldValue } = this.admin.firestore;
+    const byZone = new Map<string, RateHistoryPoint[]>();
+    for (const p of points) {
+      const list = byZone.get(p.zoneId) || [];
+      list.push(p);
+      byZone.set(p.zoneId, list);
+    }
+
+    const zoneIds = [...byZone.keys()];
+    const batchSize = 400;
+    let written = 0;
+    for (let i = 0; i < zoneIds.length; i += batchSize) {
+      const batch = this.db.batch();
+      for (const zoneId of zoneIds.slice(i, i + batchSize)) {
+        const zonePoints = byZone.get(zoneId)!;
+        const docRef = this.db.collection(this.historyCollectionName).doc(zoneId);
+        batch.set(
+          docRef,
+          {
+            zoneId,
+            points: FieldValue.arrayUnion(
+              ...zonePoints.map((p) => ({
+                recordedAt: p.recordedAt,
+                activeRate: p.activeRate,
+                peakRate: p.peakRate,
+                scheduleHash: p.scheduleHash,
+              }))
+            ),
+            updatedAt: Date.now(),
+          },
+          { merge: true }
+        );
+        written += zonePoints.length;
+      }
+      await batch.commit();
+    }
     return written;
   }
 }

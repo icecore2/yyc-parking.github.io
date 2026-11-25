@@ -150,6 +150,27 @@ export interface RateSnapshot {
   isExample?: boolean;
 }
 
+/**
+ * A price a user posted for a zone. Private to that user (users/{uid}/price_reports)
+ * and never merged into the official parking_data / parking_rate_history.
+ */
+export interface UserPriceReport {
+  id: string;
+  zoneId: string;
+  rate: number;
+  note?: string;
+  observedAt: number;
+  createdAt: number;
+  updatedAt?: number;
+  isExample?: boolean;
+}
+
+/** One point of the official, server-side rate history for a zone. */
+export interface OfficialRatePoint {
+  recordedAt: number;
+  rate: number;
+}
+
 export type WalkthroughStepId = 'profile' | 'vehicles' | 'locations' | 'favorites' | 'expenses';
 
 export interface UserOnboardingState {

@@ -111,6 +111,29 @@ rules_version = '2';
 //      Client writes (create, update, delete) are strictly forbidden; data synchronization
 //      is handled exclusively via server-side Firebase Admin SDK.
 //
+// 8. Collection: parking_rate_history/{zoneId}
+//    - Document ID: Matches the parking_data document ID of the zone.
+//    - Fields:
+//      - zoneId: string - parking_data document ID.
+//      - points: list - Official rate observations, appended by the sync service only when the
+//                       zone's rate schedule changes: { recordedAt, activeRate, peakRate, scheduleHash }.
+//      - updatedAt: number - Timestamp of the last append in epoch ms.
+//    - Access: Publicly readable. Client writes are forbidden; only the sync service (Admin SDK)
+//      writes here. User-posted prices NEVER land in this collection.
+//
+// 9. Collection: users/{uid}/price_reports/{reportId}
+//    - Document ID: Unique price report identifier.
+//    - Fields:
+//      - id: string (optional, immutable) - Report ID matching reportId (max 100 chars).
+//      - zoneId: string (required) - Parking zone identifier (1 to 100 chars).
+//      - rate: number (required) - Price the user saw/paid in dollars per hour (>= 0, <= 1000).
+//      - note: string (optional) - Short label, e.g. "Event night" (max 200 chars).
+//      - observedAt: number | timestamp (required) - When the user saw this price.
+//      - createdAt: number | timestamp (required, immutable) - Creation timestamp.
+//      - updatedAt: number | timestamp (optional) - Last update timestamp.
+//    - Access: Private to the owner. These are personal observations and are never merged into
+//      parking_data or parking_rate_history.
+//
 // ===============================================================
 
 service cloud.firestore {
@@ -387,6 +410,34 @@ service cloud.firestore {
         );
     }
 
+    // Validate a user's private posted price for a zone
+    function isValidPriceReport(data, reportId) {
+      return hasOnlyAllowedFields([
+          'id', 'zoneId', 'rate', 'note', 'observedAt', 'createdAt', 'updatedAt'
+        ]) &&
+        hasRequiredFields(['zoneId', 'rate', 'observedAt', 'createdAt']) &&
+        (
+          !('id' in data) ||
+          (data.id is string && data.id == reportId && data.id.size() <= 100)
+        ) &&
+        data.zoneId is string &&
+        data.zoneId.size() > 0 &&
+        data.zoneId.size() <= 100 &&
+        data.rate is number &&
+        data.rate >= 0 &&
+        data.rate <= 1000 &&
+        (
+          !('note' in data) ||
+          (data.note is string && data.note.size() <= 200)
+        ) &&
+        isValidTimeField(data.observedAt) &&
+        isValidTimeField(data.createdAt) &&
+        (
+          !('updatedAt' in data) ||
+          isValidTimeField(data.updatedAt)
+        );
+    }
+
     // ===============================================================
     // Rules Definition
     // ===============================================================
@@ -503,6 +554,20 @@ service cloud.firestore {
         // Owner can delete their onboarding preferences
         allow delete: if isOwner(uid) && prefId == 'onboarding';
       }
+
+      // 9. Price Reports Subcollection (private, never merged into official data)
+      match /price_reports/{reportId} {
+        allow read: if isOwner(uid);
+
+        allow create: if isOwner(uid) &&
+                         isValidPriceReport(request.resource.data, reportId);
+
+        allow update: if isOwner(uid) &&
+                         isValidPriceReport(request.resource.data, reportId) &&
+                         areImmutableFieldsUnchanged(['id', 'createdAt']);
+
+        allow delete: if isOwner(uid);
+      }
     }
 
     // 7. Synchronized Parking Data Collection (Read-only for all clients)
@@ -516,7 +581,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // 8. Default Deny: All other documents and collections are inaccessible
+    // 8. Official Rate History (Read-only for all clients; written by the sync service only)
+    match /parking_rate_history/{zoneId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Default Deny: All other documents and collections are inaccessible
     match /{document=**} {
       allow read, write: if false;
     }

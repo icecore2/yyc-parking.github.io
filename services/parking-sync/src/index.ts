@@ -69,6 +69,9 @@ export class ParkingSyncCoordinator {
     const { inserted, updated, unchanged } = this.localDb.upsertLocalRecords(allFetched);
     console.log(`  ✔ Local SQLite upsert complete: ${inserted} new, ${updated} modified, ${unchanged} unchanged.`);
 
+    const newHistoryPoints = this.localDb.appendRateHistory(allFetched);
+    console.log(`  ✔ Rate history: ${newHistoryPoints.length} new official rate point(s).`);
+
     const localStats = this.localDb.getStats();
     console.log(`  📊 Local DB Total: ${localStats.total} records across providers:`);
     for (const [pName, count] of Object.entries(localStats.byProvider)) {
@@ -92,6 +95,12 @@ export class ParkingSyncCoordinator {
       this.localDb
     );
 
+    // 5. Append official rate-history points (only zones whose schedule changed)
+    const historyPushed = await this.remoteAdapter.pushRateHistory(newHistoryPoints);
+    if (historyPushed > 0) {
+      console.log(`[Sync Coordinator] Appended ${historyPushed} rate-history point(s) to 'parking_rate_history'.`);
+    }
+
     console.log('\n======================================================');
     console.log(`[Sync Coordinator] Cycle finished: ${pushReport.pushedCount} records pushed to remote table.`);
     console.log('======================================================\n');
@@ -101,6 +110,7 @@ export class ParkingSyncCoordinator {
       localStats,
       diffsCount: diffResult.toPush.length,
       pushedCount: pushReport.pushedCount,
+      historyPointsPushed: historyPushed,
     };
   }
 

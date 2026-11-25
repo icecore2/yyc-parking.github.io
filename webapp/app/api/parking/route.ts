@@ -3,19 +3,8 @@ import { db } from '@/lib/firebase/client';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { ParkingZone, ParkingZoneGeometry, ProviderId } from '@/lib/parking/types';
 import { getPrimaryPath, pointAlongPolyline } from '@/lib/parking/geometry';
+import { getDatabaseSyncClass, getLocalParkingDbPath } from '@/lib/parking/sqlite';
 import fs from 'node:fs';
-import path from 'node:path';
-
-function getDatabaseSyncClass(): any {
-  try {
-    // Dynamic load to be compatible with @types/node v20 in Next.js
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = eval('require')('node:sqlite');
-    return mod?.DatabaseSync || null;
-  } catch {
-    return null;
-  }
-}
 
 function mapProviderNameToId(name: string): ProviderId {
   const lower = (name || '').toLowerCase();
@@ -33,7 +22,7 @@ function tryReadFromLocalSqlite(): ParkingZone[] | null {
     const DatabaseSync = getDatabaseSyncClass();
     if (!DatabaseSync) return null;
 
-    const dbPath = path.resolve(process.cwd(), '../services/parking-sync/data/local_parking.db');
+    const dbPath = getLocalParkingDbPath();
     if (fs.existsSync(dbPath)) {
       const sqlite = new DatabaseSync(dbPath);
       const rows = sqlite.prepare('SELECT * FROM local_parking_zones ORDER BY id ASC').all() as Record<string, unknown>[];

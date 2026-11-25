@@ -60,6 +60,18 @@ export interface NormalizedParkingRecord {
   remoteSyncStatus?: 'PENDING' | 'SYNCED' | 'FAILED';
 }
 
+/**
+ * One official rate observation for a zone. Appended only when the zone's rate
+ * schedule changes, so the history is a list of real price changes.
+ */
+export interface RateHistoryPoint {
+  zoneId: string;
+  recordedAt: number;
+  activeRate: number;
+  peakRate: number;
+  scheduleHash: string;
+}
+
 export interface DiffItem {
   record: NormalizedParkingRecord;
   reason: 'NEW' | 'MODIFIED';

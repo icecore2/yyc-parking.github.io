@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { db } from './client';
 import {
   CustomLocation,
@@ -6,16 +6,16 @@ import {
   RateSnapshot,
   UserFavoriteSpot,
   UserOnboardingState,
+  UserPriceReport,
   UserVehicle,
 } from '../parking/types';
 import {
   ALL_EXAMPLE_IDS,
   DEFAULT_ONBOARDING_STATE,
   LEGACY_DEFAULT_LOCATION_IDS,
-  createExampleRateSnapshots,
+  createExamplePriceReports,
   dismissExampleIds,
   restoreExampleIds,
-  stripExampleFlag,
 } from '../parking/example-data';
 
 const LOCAL_FAVORITES_PREFIX = 'yyc_parking_favorites';
@@ -23,7 +23,9 @@ const LOCAL_SESSIONS_PREFIX = 'yyc_parking_sessions';
 const LOCAL_VEHICLES_PREFIX = 'yyc_parking_vehicles';
 const LOCAL_LOCATIONS_PREFIX = 'yyc_parking_locations';
 const LOCAL_ONBOARDING_PREFIX = 'yyc_parking_onboarding';
-const LOCAL_SNAPSHOTS_PREFIX = 'yyc_zone_snapshots';
+const LOCAL_SNAPSHOTS_PREFIX = 'yyc_zone_snapshots'; // legacy, migrated into price reports
+const LOCAL_PRICE_REPORTS_PREFIX = 'yyc_parking_price_reports';
+const LOCAL_PRICE_EXAMPLES_DISMISSED_PREFIX = 'yyc_parking_price_examples_dismissed';
 
 const LEGACY_FAVORITES_KEY = 'yyc_parking_favorites';
 const LEGACY_SESSIONS_KEY = 'yyc_parking_sessions';
@@ -573,59 +575,6 @@ export async function clearAllExamplesForUser(userId: string): Promise<UserOnboa
   return dismissExamplesForUser(userId, ALL_EXAMPLE_IDS);
 }
 
-// ---------------------------------------------------------------------------
-// Zone Rate Audit Snapshots (localStorage per user + zone)
-// ---------------------------------------------------------------------------
-
-interface StoredSnapshotsRecord {
-  items: RateSnapshot[];
-  examplesDismissed: boolean;
-}
-
-export function getZoneRateSnapshots(
-  userId: string,
-  zoneId: string,
-  activeRate: number
-): RateSnapshot[] {
-  const examples = createExampleRateSnapshots(activeRate);
-  if (typeof window === 'undefined') return examples;
-
-  const key = `${scopedKey(LOCAL_SNAPSHOTS_PREFIX, userId)}_${zoneId}`;
-  const raw = localStorage.getItem(key);
-  if (!raw) return examples;
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<StoredSnapshotsRecord>;
-    const realItems = (Array.isArray(parsed.items) ? parsed.items : []).map((s) => ({
-      ...s,
-      isExample: false,
-    }));
-    if (parsed.examplesDismissed) {
-      return realItems;
-    }
-    const realIds = new Set(realItems.map((s) => s.id));
-    const remainingExamples = examples.filter((ex) => !realIds.has(ex.id));
-    return [...remainingExamples, ...realItems];
-  } catch {
-    return examples;
-  }
-}
-
-export function createRateSnapshot(
-  period: string,
-  rate: number,
-  existingCreatedAt?: number
-): RateSnapshot {
-  const now = Date.now();
-  return {
-    id: `snap_${now}`,
-    period: period.trim(),
-    rate: Number(rate.toFixed(2)),
-    createdAt: existingCreatedAt || now,
-    isExample: false,
-  };
-}
-
 export async function saveOrReplaceVehicle(
   userId: string,
   orig: UserVehicle | null,
@@ -724,37 +673,226 @@ export async function saveOrReplaceLocation(
   return updated;
 }
 
-export function saveZoneRateSnapshots(
-  userId: string,
-  zoneId: string,
-  snapshots: RateSnapshot[],
-  examplesDismissed?: boolean
-): void {
+// ---------------------------------------------------------------------------
+// Per-user posted prices (users/{uid}/price_reports)
+//
+// These are private to the user. They are never written to parking_data or
+// parking_rate_history, so a user's posts can't change the official rates.
+// ---------------------------------------------------------------------------
+
+const PRICE_REPORTS_SUBCOLLECTION = 'price_reports';
+
+function priceExamplesDismissedKey(userId: string, zoneId: string): string {
+  return `${scopedKey(LOCAL_PRICE_EXAMPLES_DISMISSED_PREFIX, userId)}_${zoneId}`;
+}
+
+function arePriceExamplesDismissed(userId: string, zoneId: string): boolean {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(priceExamplesDismissedKey(userId, zoneId)) === '1';
+}
+
+export function dismissPriceReportExamples(userId: string, zoneId: string): void {
   if (typeof window === 'undefined') return;
-  const key = `${scopedKey(LOCAL_SNAPSHOTS_PREFIX, userId)}_${zoneId}`;
-
-  let prevDismissed = false;
   try {
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      prevDismissed = Boolean((JSON.parse(raw) as Partial<StoredSnapshotsRecord>).examplesDismissed);
-    }
-  } catch {
-    // Ignore
-  }
-
-  const realItems = snapshots
-    .filter((s) => !s.isExample)
-    .map((s) => stripExampleFlag(s) as RateSnapshot);
-
-  const record: StoredSnapshotsRecord = {
-    items: realItems,
-    examplesDismissed: examplesDismissed !== undefined ? examplesDismissed : prevDismissed,
-  };
-
-  try {
-    localStorage.setItem(key, JSON.stringify(record));
+    localStorage.setItem(priceExamplesDismissedKey(userId, zoneId), '1');
   } catch {
     // Ignore quota errors
   }
+}
+
+function normalizeReport(
+  raw: Partial<UserPriceReport>,
+  id: string,
+  zoneId: string
+): UserPriceReport | null {
+  const rate = Number(raw.rate);
+  if (!Number.isFinite(rate) || rate < 0) return null;
+  const createdAt = Number(raw.createdAt) || Date.now();
+  return {
+    id,
+    zoneId: raw.zoneId || zoneId,
+    rate: Number(rate.toFixed(2)),
+    note: raw.note || undefined,
+    observedAt: Number(raw.observedAt) || createdAt,
+    createdAt,
+    updatedAt: raw.updatedAt,
+    isExample: false,
+  };
+}
+
+/**
+ * One-time move of the legacy localStorage "rate snapshots" for this zone into
+ * price reports. The legacy key is removed afterwards.
+ */
+async function migrateLegacySnapshots(userId: string, zoneId: string): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const legacyKey = `${scopedKey(LOCAL_SNAPSHOTS_PREFIX, userId)}_${zoneId}`;
+  const raw = localStorage.getItem(legacyKey);
+  if (!raw) return;
+
+  let items: RateSnapshot[] = [];
+  let dismissed = false;
+  try {
+    const parsed = JSON.parse(raw) as { items?: RateSnapshot[]; examplesDismissed?: boolean };
+    items = Array.isArray(parsed.items) ? parsed.items : [];
+    dismissed = Boolean(parsed.examplesDismissed);
+  } catch {
+    // Corrupt legacy record: drop it.
+  }
+
+  for (const snap of items) {
+    if (snap.isExample || !Number.isFinite(snap.rate)) continue;
+    const createdAt = snap.createdAt || Date.now();
+    await saveUserPriceReport(
+      userId,
+      {
+        id: snap.id.startsWith('price_') ? snap.id : `price_${snap.id}`,
+        zoneId,
+        rate: Number(snap.rate.toFixed(2)),
+        note: snap.period?.trim() || undefined,
+        observedAt: createdAt,
+        createdAt,
+        isExample: false,
+      },
+      { silent: true }
+    );
+  }
+
+  if (dismissed) dismissPriceReportExamples(userId, zoneId);
+  localStorage.removeItem(legacyKey);
+}
+
+/**
+ * The user's posted prices for one zone, oldest first. Example rows are included
+ * while the user has no real posts for the zone and hasn't dismissed them.
+ */
+export async function getUserPriceReports(
+  userId: string,
+  zoneId: string,
+  activeRate: number
+): Promise<UserPriceReport[]> {
+  await migrateLegacySnapshots(userId, zoneId);
+
+  let real: UserPriceReport[] | null = null;
+  try {
+    if (isRemoteFirestoreUser(userId)) {
+      const snap = await getDocs(
+        query(
+          collection(db, 'users', userId, PRICE_REPORTS_SUBCOLLECTION),
+          where('zoneId', '==', zoneId)
+        )
+      );
+      const remote: UserPriceReport[] = [];
+      snap.forEach((d) => {
+        const r = normalizeReport(d.data() as Partial<UserPriceReport>, d.id, zoneId);
+        if (r) remote.push(r);
+      });
+      real = remote;
+    }
+  } catch (err) {
+    console.warn('Firestore getUserPriceReports error; reading local storage', err);
+  }
+
+  if (!real) {
+    real = readLocalList<UserPriceReport>(LOCAL_PRICE_REPORTS_PREFIX, userId)
+      .filter((r) => r.zoneId === zoneId)
+      .map((r) => normalizeReport(r, r.id, zoneId))
+      .filter((r): r is UserPriceReport => r !== null);
+  }
+
+  const examples =
+    real.length === 0 && !arePriceExamplesDismissed(userId, zoneId)
+      ? createExamplePriceReports(zoneId, activeRate)
+      : [];
+
+  return [...examples, ...real].sort((a, b) => a.observedAt - b.observedAt);
+}
+
+export function createPriceReport(
+  zoneId: string,
+  input: { rate: number; note?: string; observedAt?: number }
+): UserPriceReport {
+  const now = Date.now();
+  return {
+    id: `price_${now}_${Math.random().toString(36).slice(2, 8)}`,
+    zoneId,
+    rate: Number(input.rate.toFixed(2)),
+    note: input.note?.trim() || undefined,
+    observedAt: input.observedAt || now,
+    createdAt: now,
+    isExample: false,
+  };
+}
+
+export async function saveUserPriceReport(
+  userId: string,
+  report: UserPriceReport,
+  opts: { silent?: boolean } = {}
+): Promise<void> {
+  const payload: UserPriceReport = {
+    ...report,
+    rate: Number(report.rate.toFixed(2)),
+    note: report.note?.trim().slice(0, 200) || undefined,
+    isExample: false,
+  };
+
+  let savedRemotely = false;
+  try {
+    if (isRemoteFirestoreUser(userId)) {
+      await setDoc(
+        doc(db, 'users', userId, PRICE_REPORTS_SUBCOLLECTION, payload.id),
+        sanitizeFirestorePayload(payload)
+      );
+      savedRemotely = true;
+    }
+  } catch (err) {
+    console.warn('Firestore saveUserPriceReport error; saving to local storage', err);
+  }
+
+  if (!savedRemotely) {
+    const list = readLocalList<UserPriceReport>(LOCAL_PRICE_REPORTS_PREFIX, userId);
+    const stored = sanitizeFirestorePayload(payload) as unknown as UserPriceReport;
+    const idx = list.findIndex((x) => x.id === payload.id);
+    if (idx >= 0) list[idx] = stored;
+    else list.push(stored);
+    writeLocalList(LOCAL_PRICE_REPORTS_PREFIX, userId, list);
+  }
+
+  if (!opts.silent) notifyUserDataChanged();
+}
+
+export async function updateUserPriceReport(
+  userId: string,
+  orig: UserPriceReport,
+  input: { rate: number; note?: string }
+): Promise<void> {
+  await saveUserPriceReport(userId, {
+    ...orig,
+    rate: input.rate,
+    note: input.note?.trim() || undefined,
+    updatedAt: Date.now(),
+  });
+}
+
+export async function deleteUserPriceReport(userId: string, reportId: string): Promise<void> {
+  let deletedRemotely = false;
+  try {
+    if (isRemoteFirestoreUser(userId)) {
+      await deleteDoc(doc(db, 'users', userId, PRICE_REPORTS_SUBCOLLECTION, reportId));
+      deletedRemotely = true;
+    }
+  } catch (err) {
+    console.warn('Firestore deleteUserPriceReport error; updating local storage', err);
+  }
+
+  if (!deletedRemotely) {
+    const list = readLocalList<UserPriceReport>(LOCAL_PRICE_REPORTS_PREFIX, userId);
+    writeLocalList(
+      LOCAL_PRICE_REPORTS_PREFIX,
+      userId,
+      list.filter((x) => x.id !== reportId)
+    );
+  }
+
+  notifyUserDataChanged();
 }

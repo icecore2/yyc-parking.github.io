@@ -186,6 +186,8 @@ assert.ok(/match \/vehicles\/\{vehicleId\}/.test(rules), 'firestore.rules must d
 assert.ok(/match \/locations\/\{locationId\}/.test(rules), 'firestore.rules must define locations subcollection');
 assert.ok(/match \/preferences\/\{prefId\}/.test(rules), 'firestore.rules must define preferences subcollection');
 assert.ok(/prefId == 'onboarding'/.test(rules), 'firestore.rules must scope preferences to onboarding');
+assert.ok(/match \/price_reports\/\{reportId\}/.test(rules), 'firestore.rules must define price_reports subcollection');
+assert.ok(/match \/parking_rate_history\/\{zoneId\}/.test(rules), 'firestore.rules must define parking_rate_history');
 assert.ok(/areImmutableFieldsUnchanged\(\['id', 'createdAt'\]\)/.test(rules), 'sessions update must allow editing startTime');
 
 const layoutTsx = readWebappFile('app/layout.tsx');
@@ -199,7 +201,7 @@ assert.ok(!/createdAt:\s*1730000000000/.test(authCtx), 'auth-context.tsx must us
 const firestoreTs = readWebappFile('lib/firebase/firestore.ts');
 assert.ok(/sanitizeFirestorePayload/.test(firestoreTs), 'firestore.ts must strip isExample before remote writes');
 assert.ok(/getUserVehicles/.test(firestoreTs) && /getUserLocations/.test(firestoreTs) && /getUserOnboardingState/.test(firestoreTs));
-assert.ok(/saveOrReplaceVehicle/.test(firestoreTs) && /saveOrReplaceFavorite/.test(firestoreTs) && /saveOrReplaceLocation/.test(firestoreTs) && /createRateSnapshot/.test(firestoreTs));
+assert.ok(/saveOrReplaceVehicle/.test(firestoreTs) && /saveOrReplaceFavorite/.test(firestoreTs) && /saveOrReplaceLocation/.test(firestoreTs) && /createPriceReport/.test(firestoreTs));
 
 const accountTsx = readWebappFile('app/account/page.tsx');
 assert.ok(/id="favorites"/.test(accountTsx), 'account page must provide #favorites anchor for Navbar link');
@@ -216,7 +218,8 @@ const locDialogTsx = readWebappFile('components/map/LocationsDialog.tsx');
 assert.ok(/setResolvedCoords/.test(locDialogTsx) && /onUpdateLocation/.test(locDialogTsx));
 
 const zoneSheetTsx = readWebappFile('components/map/ZoneDetailSheet.tsx');
-assert.ok(/getZoneRateSnapshots/.test(zoneSheetTsx) && /saveZoneRateSnapshots/.test(zoneSheetTsx));
+assert.ok(/getUserPriceReports/.test(zoneSheetTsx) && /saveUserPriceReport/.test(zoneSheetTsx));
+assert.ok(/item\.isExample && <ExampleBadge/.test(zoneSheetTsx), 'ZoneDetailSheet must badge example price reports');
 console.log('  ✓ Firestore rules and UI integration contracts verified');
 
 console.log('🎉 All Example Data & Onboarding tests passed successfully!');
