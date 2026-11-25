@@ -31,8 +31,10 @@ import {
   fetchCalgaryParkingZones,
   getLastDataFetchTime,
   SAMPLE_CALGARY_ZONES,
+  withLiveRates,
 } from '@/lib/parking/data-service';
-import { zoneRateForMode } from '@/lib/parking/rate-schedule';
+import { liveRatesChanged, zoneRateForMode } from '@/lib/parking/rate-schedule';
+import { getCalgaryTime } from '@/lib/parking/calgary-clock';
 
 const MapLibreView = dynamic(() => import('@/components/map/MapLibreView'), {
   ssr: false,
@@ -149,6 +151,19 @@ export default function MapAppPage() {
     return () => {
       mounted = false;
     };
+  }, []);
+
+  // Re-resolve live rates against the Calgary clock every minute so pins, filters and the
+  // preview card track paid/free transitions. Runs only after mount (no Date-dependent SSR),
+  // and keeps the previous array when no zone's live rate moved, so nothing re-renders.
+  useEffect(() => {
+    const id = setInterval(() => {
+      setAllZones((prev) => {
+        const next = withLiveRates(prev, getCalgaryTime());
+        return liveRatesChanged(prev, next) ? next : prev;
+      });
+    }, 60_000);
+    return () => clearInterval(id);
   }, []);
 
   // Dismiss zone preview card on Escape when details sheet is closed

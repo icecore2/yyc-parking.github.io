@@ -113,6 +113,10 @@ if (!process.execArgv.includes('--experimental-strip-types') && !process.feature
   assert.strictEqual(noSchedule.peakRate, 2);
   assert.strictEqual(noSchedule.activeRate, 2);
   assert.strictEqual(rs.zoneRateForMode({ activeRate: 3, isCurrentlyFree: false }, 'max'), 3);
+  // F5: re-resolving only reports a change when a live field actually moved
+  const dayZone = rs.applyLiveRate(nightZone, at(3, 12));
+  assert.strictEqual(rs.liveRatesChanged([nightZone], [rs.applyLiveRate(nightZone, at(3, 23, 30))]), false);
+  assert.strictEqual(rs.liveRatesChanged([nightZone], [dayZone]), true);
 
   const fs = require('fs');
   const src = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
@@ -148,6 +152,11 @@ if (!process.execArgv.includes('--experimental-strip-types') && !process.feature
   assert.ok(preview.includes('See posted signs'), 'Preview badge reads "See posted signs" without a schedule');
   assert.ok(sheet.includes('No paid periods posted'));
   assert.ok(sheet.includes('No published rate schedule for this zone.'));
+
+  // F5: pins and filters re-resolve against the Calgary clock every minute
+  assert.ok(/setInterval\([\s\S]{0,400}withLiveRates\([\s\S]{0,80}getCalgaryTime\(\)/.test(page), 'page re-applies withLiveRates on an interval');
+  assert.ok(/clearInterval\(/.test(page), 'interval is cleared on unmount');
+  assert.ok(/liveRatesChanged\(/.test(page), 'state only updates when live fields change');
 
   console.log('✓ rate-schedule: all assertions passed');
 })().catch((err) => { console.error(err); process.exit(1); });

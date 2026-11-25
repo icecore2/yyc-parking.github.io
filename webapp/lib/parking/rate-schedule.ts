@@ -96,3 +96,9 @@ export function zoneRateForMode(zone: LiveRateFields, mode: 'max' | 'live'): num
   if (mode === 'live') return zone.isCurrentlyFree ? 0 : zone.activeRate;
   return zone.peakRate ?? zone.activeRate;
 }
+
+/** Whether any zone's live activeRate/isCurrentlyFree differs between two same-order lists. */
+export function liveRatesChanged(prev: LiveRateFields[], next: LiveRateFields[]): boolean {
+  if (prev.length !== next.length) return true;
+  return next.some((z, i) => z.activeRate !== prev[i].activeRate || z.isCurrentlyFree !== prev[i].isCurrentlyFree);
+}
