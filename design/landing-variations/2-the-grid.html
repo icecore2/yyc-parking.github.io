@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calgary Parking — Variation 2: The grid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #E7EDF1;
+    --ink: #13233A;
+    --muted: #536479;
+    --river: #8DB6D4;
+    --free: #CFE3D6;
+    --low: #7FBF9F;
+    --mid: #E8B04A;
+    --high: #D9603B;
+    --tow: #B3122E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Public Sans', system-ui, sans-serif; background: var(--paper); color: var(--ink); line-height: 1.55; }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  .cond { font-family: 'Barlow Condensed', sans-serif; }
+
+  header { display: flex; justify-content: space-between; align-items: center; padding: 22px clamp(20px, 4vw, 56px); }
+  .brand { font-weight: 800; text-decoration: none; font-size: 17px; }
+  nav { display: flex; gap: 22px; font-size: 15px; }
+  nav a { text-decoration: none; color: var(--muted); }
+  nav a:hover { color: var(--ink); }
+
+  .hero { padding: 24px clamp(20px, 4vw, 56px) 64px; max-width: 1320px; margin: 0 auto; }
+  .hero-top { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 32px; margin-bottom: 28px; }
+  h1 { font-weight: 800; font-size: clamp(36px, 4.6vw, 64px); line-height: 1.02; letter-spacing: -0.025em; margin: 0; max-width: 16ch; }
+  .hero-top p { max-width: 40ch; margin: 0; color: var(--muted); font-size: 17px; }
+
+  .mapcard { background: #F5F8FA; border: 1px solid #C9D4DD; border-radius: 4px; padding: 20px; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 20px 28px; margin-bottom: 14px; }
+  .days { display: inline-flex; border: 1px solid #B6C3CF; border-radius: 4px; overflow: hidden; }
+  .days button { font: 600 17px 'Barlow Condensed', sans-serif; background: transparent; border: 0; padding: 6px 14px; color: var(--muted); cursor: pointer; }
+  .days button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .slider { flex: 1; min-width: 240px; display: flex; align-items: center; gap: 14px; }
+  .slider output { font: 700 28px 'Barlow Condensed', sans-serif; min-width: 92px; }
+  input[type=range] { flex: 1; accent-color: var(--ink); }
+  .legend { display: flex; gap: 14px; font: 500 16px 'Barlow Condensed', sans-serif; color: var(--muted); }
+  .legend { flex-wrap: wrap; } .legend span { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 14px; height: 14px; display: inline-block; border-radius: 2px; }
+
+  svg { width: 100%; height: auto; display: block; }
+  .block { transition: fill 220ms ease; cursor: pointer; }
+  .block:hover, .block:focus { stroke: var(--ink); stroke-width: 2; outline: none; }
+  .street-label { font: 500 15px 'Barlow Condensed', sans-serif; fill: var(--muted); }
+  .ave-label { font: 600 15px 'Barlow Condensed', sans-serif; fill: var(--muted); }
+  .tow-line { transition: opacity 220ms ease; }
+  .readout { margin-top: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 15px; color: var(--muted); }
+  .readout strong { color: var(--ink); }
+
+  .ctas { display: flex; gap: 12px; margin-top: 28px; flex-wrap: wrap; }
+  .btn { font: 700 16px 'Public Sans', sans-serif; padding: 13px 22px; border-radius: 4px; text-decoration: none; border: 2px solid var(--ink); }
+  .btn-primary { background: var(--ink); color: #fff; }
+  .btn-primary:hover { background: #24395A; }
+  .btn-ghost:hover { background: #fff; }
+
+  section { padding: 80px clamp(20px, 4vw, 56px); border-top: 1px solid #C9D4DD; }
+  .inner { max-width: 1120px; margin: 0 auto; }
+  h2 { font-size: clamp(28px, 3vw, 40px); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 40px; max-width: 22ch; }
+  .features { display: grid; grid-template-columns: 1fr 1fr; gap: 0 64px; }
+  .feature { display: grid; grid-template-columns: 110px 1fr; gap: 16px; padding: 20px 0; border-bottom: 1px solid #C9D4DD; }
+  .feature .who { font: 600 18px 'Barlow Condensed', sans-serif; color: var(--muted); }
+  .feature.pro .who { color: var(--high); }
+  .feature h3 { margin: 0 0 4px; font-size: 18px; }
+  .feature p { margin: 0; color: var(--muted); font-size: 15.5px; max-width: 44ch; }
+
+  .pricing-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px; align-items: start; }
+  .pricing-row h2 { margin: 0; }
+  .tier { background: #F5F8FA; border: 1px solid #C9D4DD; border-radius: 4px; padding: 24px; }
+  .tier.pro { border: 2px solid var(--ink); }
+  .tier h3 { margin: 0; font-size: 18px; }
+  .tier .amt { font: 700 52px 'Barlow Condensed', sans-serif; line-height: 1; margin: 10px 0 2px; }
+  .tier ul { padding-left: 18px; color: var(--muted); font-size: 15px; margin: 16px 0 20px; }
+  .tier .btn { display: block; text-align: center; }
+
+  footer { padding: 28px clamp(20px, 4vw, 56px); border-top: 1px solid #C9D4DD; color: var(--muted); font-size: 14px; }
+
+  @media (max-width: 860px) {
+    .hero-top, .features, .pricing-row { grid-template-columns: 1fr; }
+    nav { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .block, .tow-line { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="#">Calgary Parking</a>
+  <nav aria-label="Main"><a href="#">Map</a><a href="#">Expenses</a><a href="#pricing">Pricing</a><a href="#">Sign in</a></nav>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="hero-top">
+      <h1>Downtown parking, block by block and hour by hour.</h1>
+      <p>Drag the time to see which streets get expensive, which go free, and which become tow zones at rush hour.</p>
+    </div>
+
+    <div class="mapcard">
+      <div class="controls">
+        <div class="days" role="group" aria-label="Day of week">
+          <button type="button" data-day="1" aria-pressed="true">Weekday</button>
+          <button type="button" data-day="6" aria-pressed="false">Saturday</button>
+          <button type="button" data-day="0" aria-pressed="false">Sunday</button>
+        </div>
+        <label class="slider"><span class="cond" style="font-size:17px;color:var(--muted)">Time</span>
+          <input type="range" id="hour" min="6" max="23.5" step="0.5" value="12" aria-label="Time of day">
+          <output id="hourOut" for="hour">12 PM</output>
+        </label>
+        <div class="legend" aria-hidden="true">
+          <span><i style="background:var(--free)"></i>Free</span>
+          <span><i style="background:var(--low)"></i>Under $3</span>
+          <span><i style="background:var(--mid)"></i>$3–4.50</span>
+          <span><i style="background:var(--high)"></i>Over $4.50</span>
+          <span><i style="background:var(--tow)"></i>Tow zone</span>
+        </div>
+      </div>
+      <svg id="grid" viewBox="0 0 1200 470" role="img" aria-label="Heatmap of downtown Calgary parking rates by block"></svg>
+      <div class="readout"><span id="readout">Hover or focus a block to see its rate.</span><span>Illustrative rates. The live map uses City of Calgary data.</span></div>
+    </div>
+
+    <div class="ctas">
+      <a class="btn btn-primary" href="#">Open the full map</a>
+      <a class="btn btn-ghost" href="#pricing">Compare plans</a>
+    </div>
+  </div>
+
+  <section>
+    <div class="inner">
+      <h2>The same map, for every operator in the city.</h2>
+      <div class="features">
+        <div class="feature"><div class="who">Free</div><div><h3>Rates through the day</h3><p>Each zone shows its stepped rate across 24 hours, with free evenings and weekends marked.</p></div></div>
+        <div class="feature pro"><div class="who">Pro</div><div><h3>Cheapest spot finder</h3><p>Pick a destination and see every stall within a five-minute walk, ranked by total cost.</p></div></div>
+        <div class="feature"><div class="who">Free</div><div><h3>Rush-hour tow warnings</h3><p>No-stopping windows are drawn on the street itself, not hidden in a details panel.</p></div></div>
+        <div class="feature pro"><div class="who">Pro</div><div><h3>Meter and tow alarms</h3><p>A reminder 15 minutes before your time runs out or a tow window starts.</p></div></div>
+        <div class="feature"><div class="who">Free</div><div><h3>Six operators, one map</h3><p>ParkPlus, City parkades, CTrain Park &amp; Ride, Impark, Indigo and Precise ParkLink.</p></div></div>
+        <div class="feature pro"><div class="who">Pro</div><div><h3>Expense export</h3><p>Log business parking and export a CSV for your employer or your taxes.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <div class="inner pricing-row">
+      <h2>Free for everyone. Pro for people who park downtown every week.</h2>
+      <div class="tier"><h3>Free</h3><div class="amt">$0</div><ul><li>Every zone and operator</li><li>Live rate calculator</li><li>Tow warnings</li><li>One saved favourite</li></ul><a class="btn btn-ghost" href="#">Open the map</a></div>
+      <div class="tier pro"><h3>Pro</h3><div class="amt">$3.99</div><div style="color:var(--muted);font-size:15px">a month, or $29.99 a year</div><ul><li>Cheapest spot finder</li><li>Meter and tow alarms</li><li>Synced favourites</li><li>Expense export</li></ul><a class="btn btn-primary" href="#">Start Pro</a></div>
+    </div>
+  </section>
+</main>
+<footer>Calgary Parking. Rate data from the City of Calgary and participating operators.</footer>
+
+<script src="shared.js"></script>
+<script>
+  const streets = ['11 St SW','10 St','9 St','8 St','7 St','6 St','5 St','4 St','3 St','2 St','1 St SW','Centre St','1 St SE','2 St SE'];
+  const aves = ['1 Ave','2 Ave','3 Ave','4 Ave','5 Ave','6 Ave','7 Ave','8 Ave','9 Ave','10 Ave','11 Ave','12 Ave'];
+  const towAves = { '4 Ave': 'pm', '5 Ave': 'am', '9 Ave': 'pm' };
+  const svg = document.getElementById('grid');
+  const NS = 'http://www.w3.org/2000/svg';
+  const x0 = 70, y0 = 70, cw = 76, ch = 28, gap = 6;
+
+  function el(tag, attrs, text) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text) e.textContent = text; return e; }
+
+  // Bow River
+  svg.appendChild(el('path', { d: 'M0 30 C 200 10, 380 48, 600 26 S 1000 8, 1200 36 L1200 0 L0 0 Z', fill: 'var(--river)', opacity: .7 }));
+  svg.appendChild(el('text', { x: 24, y: 22, class: 'ave-label', fill: '#fff' }, 'Bow River'));
+
+  streets.forEach((s, i) => svg.appendChild(el('text', { x: x0 + i * (cw + gap) + cw / 2, y: y0 - 10, 'text-anchor': 'middle', class: 'street-label' }, s)));
+  aves.forEach((a, j) => svg.appendChild(el('text', { x: x0 - 10, y: y0 + j * (ch + gap) + ch / 2 + 4, 'text-anchor': 'end', class: 'ave-label' }, a)));
+
+  // Base rate peaks around 7 Ave / 2 St SW (the core)
+  const blocks = [];
+  aves.forEach((a, j) => {
+    streets.forEach((s, i) => {
+      const d = Math.hypot((i - 8.5) / 6, (j - 6) / 5);
+      const noise = ((i * 7 + j * 13) % 5) * 0.12;
+      const base = Math.max(1.75, 5.25 - d * 2.6 + noise);
+      const r = el('rect', { x: x0 + i * (cw + gap), y: y0 + j * (ch + gap), width: cw, height: ch, rx: 2, class: 'block', tabindex: 0 });
+      r.dataset.base = base; r.dataset.ave = a; r.dataset.street = s;
+      svg.appendChild(r); blocks.push(r);
+    });
+    if (towAves[a]) {
+      const line = el('rect', { x: x0, y: y0 + j * (ch + gap) + ch / 2 - 3, width: streets.length * (cw + gap) - gap, height: 6, fill: 'var(--tow)', class: 'tow-line', 'pointer-events': 'none' });
+      line.dataset.ave = a; svg.appendChild(line);
+    }
+  });
+
+  let day = 1;
+  const range = document.getElementById('hour'), out = document.getElementById('hourOut'), readout = document.getElementById('readout');
+  const color = (rate) => rate === 0 ? 'var(--free)' : rate < 3 ? 'var(--low)' : rate <= 4.5 ? 'var(--mid)' : 'var(--high)';
+  function towActive(ave, t) {
+    if (day < 1 || day > 5) return false;
+    const w = towAves[ave];
+    return (w === 'am' && t >= 7 && t < 9) || (w === 'pm' && t >= 15.5 && t < 18);
+  }
+  function render() {
+    const t = Number(range.value);
+    out.textContent = YYC.fmtTime(Math.floor(t), t % 1 ? 30 : 0);
+    blocks.forEach((b) => {
+      const st = YYC.zoneStatus(Number(b.dataset.base), { day, hour: Math.floor(t), minute: t % 1 ? 30 : 0 });
+      b.dataset.rate = st.rate; b.dataset.tow = towActive(b.dataset.ave, t) ? '1' : '';
+      b.setAttribute('fill', color(st.rate));
+      b.setAttribute('aria-label', `${b.dataset.ave} at ${b.dataset.street}: ${st.free ? 'free' : '$' + st.rate.toFixed(2) + ' per hour'}`);
+    });
+    svg.querySelectorAll('.tow-line').forEach((l) => l.style.opacity = towActive(l.dataset.ave, t) ? 1 : 0);
+  }
+  function describe(e) {
+    const b = e.target; if (!b.classList.contains('block')) return;
+    const rate = Number(b.dataset.rate);
+    readout.innerHTML = `<strong>${b.dataset.ave} at ${b.dataset.street}</strong>: ${rate === 0 ? 'free right now' : '$' + rate.toFixed(2) + ' per hour'}${b.dataset.tow ? ', tow zone active' : ''}`;
+  }
+  svg.addEventListener('mouseover', describe); svg.addEventListener('focusin', describe);
+  range.addEventListener('input', render);
+  document.querySelectorAll('.days button').forEach((btn) => btn.addEventListener('click', () => {
+    day = Number(btn.dataset.day);
+    document.querySelectorAll('.days button').forEach((b) => b.setAttribute('aria-pressed', b === btn));
+    render();
+  }));
+  const now = YYC.calgaryNow();
+  // Open on the current time if parking is paid; otherwise on a weekday afternoon rush.
+  if (YYC.zoneStatus(4, now).free) { day = 1; range.value = 16.5; }
+  else { day = now.day === 6 ? 6 : 1; range.value = Math.min(23.5, Math.max(6, now.hour + (now.minute >= 30 ? 0.5 : 0))); }
+  document.querySelectorAll('.days button').forEach((b) => b.setAttribute('aria-pressed', Number(b.dataset.day) === day));
+  render();
+</script>
+</body>
+</html>

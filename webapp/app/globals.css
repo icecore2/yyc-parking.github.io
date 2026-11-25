@@ -464,3 +464,19 @@ select option {
 }
 
 
+
+/* Landing page: Chinook hero. The live sky and statement replace the server fallback once mounted. */
+.chinook-reveal {
+  transition: opacity 900ms ease-out;
+}
+.chinook-fade {
+  animation: chinook-fade 700ms ease-out both;
+}
+@keyframes chinook-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chinook-reveal { transition: none; }
+  .chinook-fade { animation: none; }
+}

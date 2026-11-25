@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calgary Parking — Variation 4: The receipt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400;62..125,600;62..125,800&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --asphalt: #1F2B44;
+    --asphalt-2: #283752;
+    --paper: #FBFBF7;
+    --print: #2A2A2A;
+    --highlight: #D4F25A;
+    --line: #3A4A68;
+    --soft: #B4BFD3;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Archivo', system-ui, sans-serif; background: var(--asphalt); color: #fff; line-height: 1.55; }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--highlight); outline-offset: 3px; }
+
+  header { display: flex; justify-content: space-between; align-items: center; padding: 22px clamp(20px, 5vw, 72px); }
+  .brand { font-weight: 800; font-stretch: 110%; text-decoration: none; font-size: 18px; }
+  nav { display: flex; gap: 24px; font-size: 15px; color: var(--soft); }
+  nav a { text-decoration: none; } nav a:hover { color: #fff; }
+
+  .hero { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 56px; align-items: center; padding: 48px clamp(20px, 5vw, 72px) 110px; max-width: 1260px; margin: 0 auto; }
+  h1 { font-weight: 800; font-stretch: 72%; font-size: clamp(52px, 7.6vw, 112px); line-height: .92; letter-spacing: -0.01em; margin: 0 0 28px; }
+  .hero p { font-size: 19px; color: var(--soft); max-width: 44ch; margin: 0 0 34px; }
+  .ctas { display: flex; gap: 14px; flex-wrap: wrap; }
+  .btn { font: 700 16px 'Archivo', sans-serif; padding: 14px 24px; border-radius: 6px; text-decoration: none; }
+  .btn-primary { background: var(--highlight); color: var(--asphalt); }
+  .btn-primary:hover { background: #E3FA84; }
+  .btn-ghost { border: 1.5px solid var(--soft); }
+  .btn-ghost:hover { border-color: #fff; }
+
+  /* Receipt */
+  .receipt-wrap { display: flex; justify-content: center; }
+  .receipt { --edge: 10px; position: relative; width: min(360px, 100%); background: var(--paper); color: var(--print); font-family: 'Courier Prime', monospace; font-size: 15px; padding: 30px 26px 34px; transform: rotate(2.2deg);
+    -webkit-mask: radial-gradient(circle at 50% 0, transparent 6px, #000 6.5px) top / 16px var(--edge) repeat-x, radial-gradient(circle at 50% 100%, transparent 6px, #000 6.5px) bottom / 16px var(--edge) repeat-x, linear-gradient(#000, #000) center / 100% calc(100% - 2 * var(--edge)) no-repeat;
+            mask: radial-gradient(circle at 50% 0, transparent 6px, #000 6.5px) top / 16px var(--edge) repeat-x, radial-gradient(circle at 50% 100%, transparent 6px, #000 6.5px) bottom / 16px var(--edge) repeat-x, linear-gradient(#000, #000) center / 100% calc(100% - 2 * var(--edge)) no-repeat;
+    filter: drop-shadow(0 24px 30px rgba(0,0,0,.35)); }
+  .receipt .head { text-align: center; margin-bottom: 18px; }
+  .receipt .head strong { display: block; font-size: 18px; }
+  .receipt hr { border: 0; border-top: 1.5px dashed #9a9a9a; margin: 14px 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px; }
+  .row.dim { color: #6b6b6b; }
+  .row.total { font-weight: 700; font-size: 17px; }
+  .save { position: relative; display: flex; justify-content: space-between; font-weight: 700; font-size: 20px; margin-top: 6px; padding: 4px 6px; }
+  .save::before { content: ''; position: absolute; inset: 2px -6px 0 -6px; background: var(--highlight); transform: rotate(-1.2deg) scaleX(0); transform-origin: left; border-radius: 3px; z-index: 0; animation: swipe 700ms 600ms cubic-bezier(.3,.7,.2,1) forwards; }
+  .save span { position: relative; z-index: 1; }
+  @keyframes swipe { to { transform: rotate(-1.2deg) scaleX(1); } }
+  .receipt .foot { text-align: center; margin-top: 18px; color: #6b6b6b; font-size: 13px; }
+
+  section { padding: 96px clamp(20px, 5vw, 72px); }
+  .inner { max-width: 1140px; margin: 0 auto; }
+  h2 { font-weight: 800; font-stretch: 78%; font-size: clamp(36px, 4.6vw, 64px); line-height: .98; margin: 0 0 18px; max-width: 18ch; }
+  .lede { font-size: 18px; color: var(--soft); max-width: 56ch; margin: 0 0 56px; }
+
+  .light { background: var(--paper); color: var(--asphalt); }
+  .light .lede { color: #4D5A73; }
+  .ledger { display: grid; grid-template-columns: 1fr 1fr; gap: 0 72px; }
+  .entry { display: grid; grid-template-columns: 1fr auto; gap: 4px 24px; padding: 22px 0; border-bottom: 1.5px dashed #C3C8D2; }
+  .entry h3 { margin: 0; font-size: 19px; font-weight: 700; }
+  .entry .cost { font-family: 'Courier Prime', monospace; font-weight: 700; font-size: 16px; white-space: nowrap; }
+  .entry p { grid-column: 1 / -1; margin: 0; color: #4D5A73; font-size: 16px; max-width: 46ch; }
+
+  .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; max-width: 880px; }
+  .plan { background: var(--asphalt-2); border-radius: 10px; padding: 30px; }
+  .plan.pro { background: var(--paper); color: var(--asphalt); }
+  .plan h3 { margin: 0; font-size: 20px; font-weight: 700; }
+  .plan .amt { font-weight: 800; font-stretch: 72%; font-size: 76px; line-height: 1; margin: 10px 0 2px; }
+  .plan .per { color: var(--soft); }
+  .plan.pro .per { color: #4D5A73; }
+  .plan ul { padding-left: 18px; margin: 18px 0 26px; }
+  .plan.pro .btn-primary { background: var(--asphalt); color: #fff; }
+
+  footer { padding: 30px clamp(20px, 5vw, 72px); color: var(--soft); font-size: 14px; border-top: 1px solid var(--line); }
+
+  @media (max-width: 880px) {
+    .hero, .ledger, .plans { grid-template-columns: 1fr; }
+    .receipt { transform: none; }
+    nav { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .save::before { animation: none; transform: rotate(-1.2deg); } }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="#">Calgary Parking</a>
+  <nav aria-label="Main"><a href="#">Map</a><a href="#">Expenses</a><a href="#pricing">Pricing</a><a href="#">Sign in</a></nav>
+</header>
+
+<main>
+  <div class="hero">
+    <div>
+      <h1>Two blocks over, the same game night costs $12 less.</h1>
+      <p>Compare every street stall, parkade and lot near where you're going, from ParkPlus, the City, Impark, Indigo and more. Then park at the cheaper one.</p>
+      <div class="ctas">
+        <a class="btn btn-primary" href="#">Find cheaper parking</a>
+        <a class="btn btn-ghost" href="#pricing">See plans</a>
+      </div>
+    </div>
+
+    <div class="receipt-wrap">
+      <div class="receipt" role="img" aria-label="Receipt comparing two parking options near Scotiabank Saddledome: $15 at an event lot versus $3 on the street two blocks away, saving $12.">
+        <div class="head"><strong>Flames game, 6:30 PM</strong>Near Scotiabank Saddledome</div>
+        <hr>
+        <div class="row"><span>Event lot, 4 hrs</span><span>$15.00</span></div>
+        <div class="row dim"><span>&nbsp;Flat event rate</span><span></span></div>
+        <hr>
+        <div class="row"><span>Zone 2215, 12 Ave SE</span><span></span></div>
+        <div class="row dim"><span>&nbsp;5:15–6:00 PM at $4/hr</span><span>$3.00</span></div>
+        <div class="row dim"><span>&nbsp;6:00–10:30 PM</span><span>Free</span></div>
+        <div class="row dim"><span>&nbsp;Walk to the gate</span><span>7 min</span></div>
+        <hr>
+        <div class="row total"><span>You pay</span><span>$3.00</span></div>
+        <div class="save"><span>You save</span><span>$12.00</span></div>
+        <div class="foot">Illustrative example</div>
+      </div>
+    </div>
+  </div>
+
+  <section class="light">
+    <div class="inner">
+      <h2>What the free map covers, and what Pro adds.</h2>
+      <p class="lede">The map is free for everyone. Pro is for people who park downtown every week and want the app to do the comparing.</p>
+      <div class="ledger">
+        <div class="entry"><h3>Rates through the day</h3><span class="cost">Free</span><p>Each zone's stepped rate across 24 hours, with free evenings and weekends marked.</p></div>
+        <div class="entry"><h3>Cheapest spot finder</h3><span class="cost">Pro</span><p>Pick a destination. Every stall within a five-minute walk, ranked by what you'd actually pay.</p></div>
+        <div class="entry"><h3>Rush-hour tow warnings</h3><span class="cost">Free</span><p>No-stopping windows on 4 Ave, 5 Ave and 9 Ave flagged before you leave the car.</p></div>
+        <div class="entry"><h3>Meter and tow alarms</h3><span class="cost">Pro</span><p>A reminder 15 minutes before your time runs out or a tow window starts.</p></div>
+        <div class="entry"><h3>Six operators, one map</h3><span class="cost">Free</span><p>ParkPlus, City parkades, CTrain Park &amp; Ride, Impark, Indigo and Precise ParkLink.</p></div>
+        <div class="entry"><h3>Expense export</h3><span class="cost">Pro</span><p>Log business parking and export a clean CSV for your employer or your taxes.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <div class="inner">
+      <h2>Pro pays for itself the first time it moves you.</h2>
+      <p class="lede">At $29.99 a year, one avoided tow covers more than three years.</p>
+      <div class="plans">
+        <div class="plan"><h3>Free</h3><div class="amt">$0</div><div class="per">always</div><ul><li>Every zone and operator</li><li>Live rate calculator</li><li>Tow warnings</li><li>One saved favourite</li></ul><a class="btn btn-ghost" href="#">Open the map</a></div>
+        <div class="plan pro"><h3>Pro</h3><div class="amt">$3.99</div><div class="per">a month, or $29.99 a year</div><ul><li>Cheapest spot finder</li><li>Meter and tow alarms</li><li>Synced favourites</li><li>Expense export</li></ul><a class="btn btn-primary" href="#">Start Pro</a></div>
+      </div>
+    </div>
+  </section>
+</main>
+<footer>Calgary Parking. Rate data from the City of Calgary and participating operators.</footer>
+</body>
+</html>

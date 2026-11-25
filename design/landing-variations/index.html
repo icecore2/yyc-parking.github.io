@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Landing page variations</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; background: #E4E6E9; color: #22262B; }
+  header { padding: 24px 32px 8px; } h1 { margin: 0; font-size: 22px; } p { margin: 6px 0 0; color: #5A616A; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(560px, 1fr)); gap: 28px; padding: 24px 32px 48px; }
+  figure { margin: 0; background: #fff; border-radius: 8px; overflow: hidden; }
+  .frame { height: 420px; overflow: hidden; position: relative; }
+  iframe { width: 1440px; height: 1050px; border: 0; transform: scale(.4); transform-origin: 0 0; pointer-events: none; }
+  figcaption { padding: 14px 18px; } figcaption a { font-weight: 700; }
+</style>
+</head>
+<body>
+<header><h1>Calgary Parking landing page: five directions</h1><p>Click a title to open the full page.</p></header>
+<div class="grid">
+  <figure><div class="frame"><iframe src="1-curb-sign.html" title="Variation 1"></iframe></div><figcaption><a href="1-curb-sign.html">1. Curb sign</a><p>A parking-sign pole whose bottom sign shows the live rate.</p></figcaption></figure>
+  <figure><div class="frame"><iframe src="2-the-grid.html" title="Variation 2"></iframe></div><figcaption><a href="2-the-grid.html">2. The grid</a><p>An interactive downtown heatmap with a time scrubber.</p></figcaption></figure>
+  <figure><div class="frame"><iframe src="3-chinook-now.html" title="Variation 3"></iframe></div><figcaption><a href="3-chinook-now.html">3. Chinook now</a><p>A sky set to Calgary's current time, with a live headline.</p></figcaption></figure>
+  <figure><div class="frame"><iframe src="4-the-receipt.html" title="Variation 4"></iframe></div><figcaption><a href="4-the-receipt.html">4. The receipt</a><p>A savings receipt that compares two nearby spots.</p></figcaption></figure>
+  <figure><div class="frame"><iframe src="5-tow-clock.html" title="Variation 5"></iframe></div><figcaption><a href="5-tow-clock.html">5. Tow clock</a><p>A live countdown to the next rush-hour tow window.</p></figcaption></figure>
+</div>
+</body>
+</html>

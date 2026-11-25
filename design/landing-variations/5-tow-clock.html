@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calgary Parking — Variation 5: Tow clock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Libre+Franklin:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --red: #B3141F;
+    --red-deep: #8E0F18;
+    --white: #FFFFFF;
+    --hazard: #F5C518;
+    --steel: #2F343B;
+    --fog: #EEF0F2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Libre Franklin', system-ui, sans-serif; color: var(--steel); background: var(--fog); line-height: 1.55; }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--hazard); outline-offset: 3px; }
+  .display { font-family: 'Big Shoulders Display', sans-serif; }
+
+  .field { background: var(--red); color: var(--white); }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 22px clamp(20px, 5vw, 72px); }
+  .brand { font-weight: 700; text-decoration: none; font-size: 17px; }
+  nav { display: flex; gap: 24px; font-size: 15px; }
+  nav a { text-decoration: none; opacity: .85; } nav a:hover { opacity: 1; }
+
+  .hero { padding: 40px clamp(20px, 5vw, 72px) 72px; max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: 1fr auto; gap: 48px; align-items: end; }
+  .where { font-size: 19px; font-weight: 600; margin: 0 0 6px; }
+  .count { font-family: 'Big Shoulders Display', sans-serif; font-weight: 900; font-size: clamp(96px, 17vw, 260px); line-height: .82; letter-spacing: -0.01em; margin: 0; font-variant-numeric: tabular-nums; }
+  .count small { font-size: .32em; font-weight: 700; letter-spacing: 0; margin-left: .1em; }
+  h1 { font-family: 'Big Shoulders Display', sans-serif; font-weight: 700; font-size: clamp(30px, 3.4vw, 48px); line-height: 1.02; margin: 18px 0 0; max-width: 22ch; }
+  .side { max-width: 34ch; padding-bottom: 10px; }
+  .side p { font-size: 17px; margin: 0 0 26px; }
+  .btn { display: inline-block; font: 700 16px 'Libre Franklin', sans-serif; padding: 14px 22px; border-radius: 4px; text-decoration: none; }
+  .btn-white { background: var(--white); color: var(--red); }
+  .btn-white:hover { background: var(--fog); }
+  .btn-line { border: 2px solid rgba(255,255,255,.75); color: #fff; margin-left: 8px; }
+  .btn-line:hover { background: var(--red-deep); }
+  .hazard { height: 14px; background: repeating-linear-gradient(-45deg, var(--hazard) 0 18px, var(--steel) 18px 36px); }
+
+  section { padding: 88px clamp(20px, 5vw, 72px); }
+  .inner { max-width: 1120px; margin: 0 auto; }
+  h2 { font-family: 'Big Shoulders Display', sans-serif; font-weight: 900; font-size: clamp(40px, 5vw, 68px); line-height: .95; margin: 0 0 16px; max-width: 18ch; }
+  .lede { font-size: 18px; max-width: 58ch; margin: 0 0 44px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--white); font-size: 16px; }
+  caption { text-align: left; font-size: 14px; color: #5B636D; caption-side: bottom; padding-top: 12px; }
+  th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid #DDE1E5; }
+  thead th { font-weight: 700; font-size: 14px; color: #5B636D; background: var(--fog); border-bottom: 2px solid var(--steel); }
+  td.street { font-family: 'Big Shoulders Display', sans-serif; font-weight: 900; font-size: 26px; }
+  .live { display: inline-block; font-weight: 700; font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--red); color: #fff; }
+  .clear { color: #5B636D; font-size: 14px; }
+
+  .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; }
+  .tools div { border-left: 4px solid var(--red); padding-left: 18px; }
+  .tools .pro { border-left-color: var(--steel); }
+  .tools h3 { margin: 0 0 6px; font-size: 18px; }
+  .tools p { margin: 0; font-size: 16px; color: #4B535C; }
+  .tools .who { font-size: 14px; font-weight: 700; color: var(--red); margin-bottom: 4px; }
+  .tools .pro .who { color: var(--steel); }
+
+  .pricing { background: var(--steel); color: #fff; }
+  .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 840px; }
+  .plan { background: #3A4048; border-radius: 6px; padding: 28px; }
+  .plan.pro { background: var(--red); }
+  .plan h3 { margin: 0; font-size: 19px; }
+  .plan .amt { font-family: 'Big Shoulders Display', sans-serif; font-weight: 900; font-size: 84px; line-height: .9; margin: 10px 0 4px; }
+  .plan ul { padding-left: 18px; margin: 18px 0 24px; }
+
+  footer { padding: 28px clamp(20px, 5vw, 72px); background: var(--steel); color: #A9B0B8; font-size: 14px; border-top: 1px solid #454B53; }
+
+  @media (max-width: 860px) {
+    .hero, .tools, .plans { grid-template-columns: 1fr; }
+    .btn-line { margin: 10px 0 0; }
+    nav { display: none; }
+    th:nth-child(3), td:nth-child(3) { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="field">
+  <header>
+    <a class="brand" href="#">Calgary Parking</a>
+    <nav aria-label="Main"><a href="#">Map</a><a href="#">Expenses</a><a href="#pricing">Pricing</a><a href="#">Sign in</a></nav>
+  </header>
+  <div class="hero">
+    <div>
+      <p class="where" id="where">4 Ave SW becomes a tow zone in</p>
+      <p class="count" id="count" aria-live="polite">2<small>h</small> 14<small>m</small></p>
+      <h1>Towing in downtown Calgary costs over $100. Knowing the window is free.</h1>
+    </div>
+    <div class="side">
+      <p>Every rush-hour no-stopping street, every rate and every free hour for 1,600+ zones, on one map that checks the clock for you.</p>
+      <a class="btn btn-white" href="#">Open the map</a><a class="btn btn-line" href="#pricing">Get tow alarms</a>
+    </div>
+  </div>
+  <div class="hazard" aria-hidden="true"></div>
+</div>
+
+<main>
+  <section>
+    <div class="inner">
+      <h2>The streets that turn into tow zones.</h2>
+      <p class="lede">These are the downtown avenues with weekday rush-hour restrictions. The map draws them in red while they're active.</p>
+      <table>
+        <caption>Illustrative schedule. The live map uses posted City of Calgary restrictions.</caption>
+        <thead><tr><th scope="col">Street</th><th scope="col">No stopping</th><th scope="col">Direction</th><th scope="col">Right now</th></tr></thead>
+        <tbody id="tow-rows">
+          <tr data-w="am"><td class="street">5 Ave SW</td><td>7–9 AM, Mon–Fri</td><td>Westbound into the core</td><td></td></tr>
+          <tr data-w="pm"><td class="street">4 Ave SW</td><td>3:30–6 PM, Mon–Fri</td><td>Eastbound out of the core</td><td></td></tr>
+          <tr data-w="pm"><td class="street">9 Ave SW</td><td>3:30–6 PM, Mon–Fri</td><td>Eastbound</td><td></td></tr>
+          <tr data-w="am"><td class="street">6 Ave SW</td><td>7–9 AM, Mon–Fri</td><td>Westbound</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="inner">
+      <h2>Then everything else about parking.</h2>
+      <p class="lede">The tow windows are the expensive part. The rest of the map covers what you pay and where.</p>
+      <div class="tools">
+        <div><div class="who">Free</div><h3>Rates through the day</h3><p>Each zone's stepped rate across 24 hours, with free evenings and weekends.</p></div>
+        <div><div class="who">Free</div><h3>Six operators</h3><p>ParkPlus, City parkades, Park &amp; Ride, Impark, Indigo and Precise ParkLink.</p></div>
+        <div><div class="who">Free</div><h3>Search by zone or street</h3><p>Type the number on the sign or the street you're on.</p></div>
+        <div class="pro"><div class="who">Pro</div><h3>Tow and meter alarms</h3><p>A notification 15 minutes before a tow window starts or your time runs out.</p></div>
+        <div class="pro"><div class="who">Pro</div><h3>Cheapest spot finder</h3><p>Every stall within a five-minute walk of your destination, ranked by cost.</p></div>
+        <div class="pro"><div class="who">Pro</div><h3>Expense export</h3><p>Log business parking and export a CSV for claims or taxes.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="pricing" id="pricing">
+    <div class="inner">
+      <h2>Pro costs less than a third of one tow.</h2>
+      <p class="lede">$29.99 a year, or $3.99 a month. Cancel from your account page at any time.</p>
+      <div class="plans">
+        <div class="plan"><h3>Free</h3><div class="amt">$0</div><ul><li>Every zone and operator</li><li>Tow windows on the map</li><li>Live rate calculator</li><li>One saved favourite</li></ul><a class="btn btn-white" href="#">Open the map</a></div>
+        <div class="plan pro"><h3>Pro</h3><div class="amt">$3.99</div><div>a month, or $29.99 a year</div><ul><li>Tow and meter alarms</li><li>Cheapest spot finder</li><li>Synced favourites</li><li>Expense export</li></ul><a class="btn btn-white" href="#">Start Pro</a></div>
+      </div>
+    </div>
+  </section>
+</main>
+<footer>Calgary Parking. Rate data from the City of Calgary and participating operators.</footer>
+
+<script src="shared.js"></script>
+<script>
+  function update() {
+    const now = YYC.calgaryNow();
+    const tow = YYC.nextTow(now);
+    const street = tow.window.start < 12 ? '5 Ave SW' : '4 Ave SW';
+    const h = Math.floor(tow.minutes / 60), m = tow.minutes % 60;
+    document.getElementById('where').textContent = tow.active
+      ? `${street} is a tow zone right now. It clears in`
+      : `${street} becomes a tow zone${tow.when ? ' ' + tow.when : ''} in`;
+    document.getElementById('count').innerHTML = h >= 24 ? `${Math.floor(h / 24)}<small>d</small> ${h % 24}<small>h</small>` : h ?`${h}<small>h</small> ${m}<small>m</small>` : `${m}<small>m</small>`;
+    const t = now.hour + now.minute / 60, weekday = now.day >= 1 && now.day <= 5;
+    document.querySelectorAll('#tow-rows tr').forEach((tr) => {
+      const on = weekday && (tr.dataset.w === 'am' ? t >= 7 && t < 9 : t >= 15.5 && t < 18);
+      tr.lastElementChild.innerHTML = on ? '<span class="live">Tow zone active</span>' : '<span class="clear">Parking allowed</span>';
+    });
+  }
+  update(); setInterval(update, 30000);
+</script>
+</body>
+</html>

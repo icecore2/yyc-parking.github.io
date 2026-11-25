@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calgary Parking — Variation 1: Curb sign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sign: #FFFFFF;
+    --green: #00704A;
+    --green-deep: #00563A;
+    --red: #C8102E;
+    --asphalt: #2E3236;
+    --concrete: #D9DCD6;
+    --pole: #8A9096;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Overpass', system-ui, sans-serif; color: var(--asphalt); background: var(--concrete); line-height: 1.5; }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--red); outline-offset: 3px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 20px clamp(20px, 5vw, 64px); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; text-decoration: none; }
+  .brand-p { width: 34px; height: 34px; border-radius: 6px; background: var(--green); color: #fff; display: grid; place-items: center; font-weight: 900; font-size: 22px; border: 2px solid #fff; box-shadow: 0 0 0 2px var(--green); }
+  nav { display: flex; gap: 24px; font-weight: 600; font-size: 15px; }
+  nav a { text-decoration: none; }
+  nav a:hover { text-decoration: underline; text-underline-offset: 4px; }
+
+  .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: end; padding: 40px clamp(20px, 5vw, 64px) 0; max-width: 1240px; margin: 0 auto; }
+  .hero h1 { font-weight: 900; font-size: clamp(44px, 6.4vw, 88px); line-height: 0.95; letter-spacing: -0.02em; margin: 0 0 24px; max-width: 11ch; }
+  .hero p { font-size: 19px; max-width: 46ch; margin: 0 0 32px; }
+  .ctas { display: flex; gap: 14px; flex-wrap: wrap; padding-bottom: 96px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-weight: 800; font-size: 17px; padding: 14px 24px 12px; border-radius: 8px; text-decoration: none; border: 3px solid var(--asphalt); }
+  .btn-primary { background: var(--green); border-color: var(--green); color: #fff; }
+  .btn-primary:hover { background: var(--green-deep); border-color: var(--green-deep); }
+  .btn-ghost:hover { background: var(--asphalt); color: #fff; }
+
+  /* The pole */
+  .pole-wrap { position: relative; display: flex; flex-direction: column; align-items: center; padding-top: 8px; }
+  .pole { position: absolute; top: 0; bottom: 0; left: 50%; width: 18px; transform: translateX(-50%); background: linear-gradient(90deg, #6f757b, #b7bcc0 40%, #7d8389); border-radius: 4px 4px 0 0; }
+  .sign { position: relative; width: min(340px, 90%); background: var(--sign); border-radius: 10px; margin-bottom: 22px; padding: 18px 20px 16px; box-shadow: 0 2px 0 rgba(0,0,0,.25), 0 12px 24px -12px rgba(0,0,0,.35); text-align: center; }
+  .sign::before, .sign::after { content: ''; position: absolute; left: 50%; width: 8px; height: 8px; border-radius: 50%; background: #9aa0a5; transform: translateX(-50%); }
+  .sign::before { top: 6px; } .sign::after { bottom: 6px; }
+  .sign-park { border: 5px solid var(--green); }
+  .sign-park .big { font-size: 64px; font-weight: 900; color: var(--green); line-height: 1; margin: 6px 0 4px; }
+  .sign-park .zone { font-weight: 800; font-size: 22px; }
+  .sign-park .rule { font-size: 15px; font-weight: 600; margin-top: 6px; }
+  .sign-tow { border: 5px solid var(--red); }
+  .sign-tow .no { display: inline-grid; place-items: center; width: 58px; height: 58px; border: 6px solid var(--red); border-radius: 50%; position: relative; font-weight: 900; font-size: 22px; color: var(--asphalt); margin-bottom: 6px; }
+  .sign-tow .no::after { content: ''; position: absolute; width: 6px; height: 62px; background: var(--red); transform: rotate(45deg); }
+  .sign-tow .times { font-weight: 900; font-size: 24px; line-height: 1.15; }
+  .sign-tow .small { font-size: 14px; font-weight: 600; }
+  .sign-live { background: var(--green); color: #fff; border: 5px solid #fff; box-shadow: 0 0 0 3px var(--green), 0 12px 24px -12px rgba(0,0,0,.35); margin-bottom: 0; }
+  .sign-live .now { font-size: 15px; font-weight: 600; }
+  .sign-live .state { font-size: 40px; font-weight: 900; line-height: 1.05; margin: 2px 0; }
+  .sign-live .until { font-size: 16px; font-weight: 600; }
+  .curb { height: 22px; background: repeating-linear-gradient(90deg, #f0c419 0 60px, #2b2b2b 60px 120px); border-top: 4px solid #bfc3be; }
+
+  section { padding: 88px clamp(20px, 5vw, 64px); }
+  .inner { max-width: 1120px; margin: 0 auto; }
+  h2 { font-weight: 900; font-size: clamp(30px, 3.6vw, 46px); line-height: 1.05; letter-spacing: -0.01em; margin: 0 0 16px; max-width: 20ch; }
+  .lede { font-size: 18px; max-width: 58ch; margin: 0 0 48px; }
+
+  .rules { background: var(--sign); }
+  .rule-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px 48px; list-style: none; margin: 0; padding: 0; }
+  .rule-list li { border-top: 5px solid var(--green); padding-top: 18px; }
+  .rule-list li.pro { border-top-color: var(--asphalt); }
+  .rule-list h3 { font-size: 21px; font-weight: 800; margin: 0 0 8px; line-height: 1.2; }
+  .rule-list p { margin: 0; font-size: 16px; max-width: 36ch; }
+  .tag { display: inline-block; font-size: 13px; font-weight: 800; padding: 3px 8px 1px; border-radius: 4px; background: var(--asphalt); color: #fff; margin-bottom: 10px; }
+  .rule-list li:not(.pro) .tag { background: var(--green); }
+
+  .pricing { background: var(--asphalt); color: #fff; }
+  .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; max-width: 860px; }
+  .plan { background: #fff; color: var(--asphalt); border-radius: 12px; padding: 28px; border: 6px solid var(--green); }
+  .plan.pro { border-color: #f0c419; }
+  .plan h3 { margin: 0; font-size: 22px; font-weight: 800; }
+  .price { font-size: 56px; font-weight: 900; line-height: 1; margin: 12px 0 4px; }
+  .price small { font-size: 17px; font-weight: 600; }
+  .plan ul { padding-left: 20px; margin: 18px 0 24px; }
+  .plan li { margin-bottom: 6px; }
+  .plan .btn { width: 100%; justify-content: center; }
+  .plan.pro .btn { background: var(--asphalt); color: #fff; }
+
+  footer { padding: 32px clamp(20px, 5vw, 64px); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; }
+    .ctas { padding-bottom: 40px; }
+    .rule-list, .plans { grid-template-columns: 1fr; }
+    nav { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="#"><span class="brand-p" aria-hidden="true">P</span>Calgary Parking</a>
+  <nav aria-label="Main"><a href="#">Map</a><a href="#">Expenses</a><a href="#pricing">Pricing</a><a href="#">Sign in</a></nav>
+</header>
+
+<main>
+  <div class="hero">
+    <div>
+      <h1>Know what the curb costs before you park.</h1>
+      <p>Rates, free hours and rush-hour tow windows for 1,600+ Calgary zones from ParkPlus, City parkades, CTrain Park &amp; Ride, Impark and Indigo, all on one map.</p>
+      <div class="ctas">
+        <a class="btn btn-primary" href="#">Open the free map</a>
+        <a class="btn btn-ghost" href="#pricing">See Pro features</a>
+      </div>
+    </div>
+
+    <div class="pole-wrap" aria-label="Example zone signs for 7 Ave SW">
+      <div class="pole" aria-hidden="true"></div>
+      <div class="sign sign-park">
+        <div class="zone">Zone 1023<br>7 Ave SW</div>
+        <div class="big">$3.75</div>
+        <div class="rule">per hour, 9 AM – 6 PM Mon–Sat<br>Free Sundays and holidays</div>
+      </div>
+      <div class="sign sign-tow">
+        <div class="no" aria-hidden="true">P</div>
+        <div class="times">7–9 AM<br>3:30–6 PM</div>
+        <div class="small">Mon–Fri, tow-away zone</div>
+      </div>
+      <div class="sign sign-live" aria-live="polite">
+        <div class="now" id="now">Right now</div>
+        <div class="state" id="state">Free</div>
+        <div class="until" id="until">until 9 AM</div>
+      </div>
+    </div>
+  </div>
+  <div class="curb" aria-hidden="true"></div>
+
+  <section class="rules">
+    <div class="inner">
+      <h2>Every zone, explained like a sign you can actually read.</h2>
+      <p class="lede">Calgary's parking rules change by block, by hour and by day. Tap any pin to see what it costs now, when it goes free, and when it turns into a tow zone.</p>
+      <ul class="rule-list">
+        <li><span class="tag">Free</span><h3>Rates through the day</h3><p>See what a zone costs at 10 AM versus 7 PM, with free evenings and weekend rates marked.</p></li>
+        <li><span class="tag">Free</span><h3>Rush-hour tow warnings</h3><p>No-stopping windows on 4 Ave, 5 Ave and 9 Ave are flagged on the pin and in the zone details.</p></li>
+        <li><span class="tag">Free</span><h3>Every operator together</h3><p>Street stalls, City parkades, Park &amp; Ride and private lots, filtered on one map.</p></li>
+        <li class="pro"><span class="tag">Pro</span><h3>Cheapest spot near you</h3><p>Pick a destination. We rank every stall within a five-minute walk by total cost.</p></li>
+        <li class="pro"><span class="tag">Pro</span><h3>Meter and tow alarms</h3><p>Get a reminder 15 minutes before your time runs out or a tow window starts.</p></li>
+        <li class="pro"><span class="tag">Pro</span><h3>Expense export</h3><p>Log business parking and export a CSV for your employer or your taxes.</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="pricing" id="pricing">
+    <div class="inner">
+      <h2>Free to use. Pro if you park downtown often.</h2>
+      <p class="lede">A single avoided tow covers more than three years of Pro on the annual plan.</p>
+      <div class="plans">
+        <div class="plan">
+          <h3>Free</h3>
+          <div class="price">$0</div>
+          <ul><li>All zones, rates and operators</li><li>Live rate calculator</li><li>Rush-hour tow warnings</li><li>One saved favourite</li></ul>
+          <a class="btn btn-primary" href="#">Open the free map</a>
+        </div>
+        <div class="plan pro">
+          <h3>Pro</h3>
+          <div class="price">$3.99<small> / month</small></div>
+          <div>or $29.99 a year</div>
+          <ul><li>Cheapest spot finder</li><li>Meter and tow alarms</li><li>Unlimited synced favourites</li><li>Expense tracker with CSV export</li></ul>
+          <a class="btn" href="#">Start Pro</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer><span>Calgary Parking. Rate data from the City of Calgary and participating operators.</span><a href="#">Privacy</a></footer>
+
+<script src="shared.js"></script>
+<script>
+  const now = YYC.calgaryNow();
+  const s = YYC.zoneStatus(3.75, now);
+  document.getElementById('now').textContent = `Right now, ${YYC.fmtTime(now.hour, now.minute)}`;
+  document.getElementById('state').textContent = s.free ? 'Free' : `$${s.rate.toFixed(2)}/hr`;
+  document.getElementById('until').textContent = `until ${s.until}`;
+</script>
+</body>
+</html>

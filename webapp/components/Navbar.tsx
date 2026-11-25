@@ -20,16 +20,36 @@ import {
 
 const emptySubscribe = () => () => {};
 
-export default function Navbar() {
+type NavbarProps = {
+  /** `overlay` sits transparently on top of a full-bleed hero (landing page). */
+  variant?: 'default' | 'overlay';
+};
+
+export default function Navbar({ variant = 'default' }: NavbarProps) {
+  const overlay = variant === 'overlay';
   const pathname = usePathname();
   const { user, profile, isPro, isAdmin, signOutUser, toggleDemoTier } = useAuth();
   const { onboardingState, progress, openWalkthrough } = useWalkthrough();
   const [showAuthModal, setShowAuthModal] = useState(false);
   const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
 
+  const navLinkClass = (href: string) => {
+    const active = pathname === href;
+    if (overlay) {
+      return `whitespace-nowrap px-3 py-1.5 rounded-lg transition-colors ${active ? 'text-white font-semibold bg-white/15' : 'text-white/80 hover:text-white'}`;
+    }
+    return `whitespace-nowrap px-3 py-1.5 rounded-lg transition-colors ${active ? 'text-primary font-semibold bg-primary/10' : 'text-muted-foreground hover:text-foreground'}`;
+  };
+
   return (
     <>
-      <header className="sticky top-0 z-40 w-full border-b border-border bg-background/90 backdrop-blur-md">
+      <header
+        className={
+          overlay
+            ? 'absolute inset-x-0 top-0 z-40 w-full border-b border-transparent bg-transparent'
+            : 'sticky top-0 z-40 w-full border-b border-border bg-background/90 backdrop-blur-md'
+        }
+      >
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           {/* Brand Logo & Title */}
           <Link href="/" className="flex items-center gap-3 group">
@@ -38,7 +58,7 @@ export default function Navbar() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-base tracking-tight text-foreground">Calgary Parking</span>
+                <span className={`font-bold text-base tracking-tight ${overlay ? 'text-white' : 'text-foreground'}`}>Calgary Parking</span>
                 <Badge variant="success" className="hidden sm:inline-flex text-[10px]">
                   Live Rates
                 </Badge>
@@ -50,33 +70,25 @@ export default function Navbar() {
           <nav className="hidden md:flex items-center gap-1 text-sm font-medium">
             <Link
               href="/"
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                pathname === '/' ? 'text-primary font-semibold bg-primary/10' : 'text-muted-foreground hover:text-foreground'
-              }`}
+              className={navLinkClass('/')}
             >
               Home
             </Link>
             <Link
               href="/app"
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                pathname === '/app' ? 'text-primary font-semibold bg-primary/10' : 'text-muted-foreground hover:text-foreground'
-              }`}
+              className={navLinkClass('/app')}
             >
               Interactive Map
             </Link>
             <Link
               href="/expenses"
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                pathname === '/expenses' ? 'text-primary font-semibold bg-primary/10' : 'text-muted-foreground hover:text-foreground'
-              }`}
+              className={navLinkClass('/expenses')}
             >
               Expense Tracker
             </Link>
             <Link
               href="/pricing"
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                pathname === '/pricing' ? 'text-primary font-semibold bg-primary/10' : 'text-muted-foreground hover:text-foreground'
-              }`}
+              className={navLinkClass('/pricing')}
             >
               Pricing &amp; Pro
             </Link>
