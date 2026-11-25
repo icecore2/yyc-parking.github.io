@@ -14,12 +14,46 @@ export function toWgs84(x: number, y: number): [number, number] {
   return [Number(x.toFixed(6)), Number(y.toFixed(6))];
 }
 
-const RE_TIME_RANGE = /(\d{1,2}):(\d{2})\s*(AM|PM)\s*to\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i;
+const RE_TIME_RANGE = /(\d{1,2}):(\d{2})\s*(AM|PM)?\s*to\s*(\d{1,2}):(\d{2})\s*(AM|PM)?/i;
 const RE_DOUBLE_BR = /<br\s*\/?>\s*<br\s*\/?>/gi;
 const RE_SINGLE_BR = /<br\s*\/?>/gi;
 const RE_BOLD_TAGS = /<\/?b>/gi;
 const RE_PRICE = /\$([0-9]+(?:\.[0-9]{2})?)/;
 const RE_FREE = /free/i;
+
+// First matching rule wins. Daily is checked before Saturday/Sunday so that
+// "Mon-Sun" is not read as Sunday.
+const DAY_RULES: Array<[RegExp, string]> = [
+  [/\bmon(?:-|\s+to\s+)sat\b/i, 'Mon-Sat'],
+  [/\bmon(?:-|\s+to\s+)thu\b/i, 'Mon-Thu'],
+  [/\b(?:mon(?:-|\s+to\s+)fri|weekdays?)\b/i, 'Mon-Fri'],
+  [/\b(?:daily|mon-sun|everyday)\b/i, 'Daily'],
+  [/\b(?:sat|saturday)\b/i, 'Saturday'],
+  [/\b(?:sun|sunday|holiday)/i, 'Sunday'],
+  [/\b(?:fri|friday)\b/i, 'Fri'],
+];
+
+function to24h(hour: string, minute: string, meridiem: string | undefined): string {
+  let h = parseInt(hour, 10);
+  const mer = meridiem?.toUpperCase();
+  if (mer === 'PM' && h !== 12) h += 12;
+  if (mer === 'AM' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${minute}`;
+}
+
+export function parseRateHeader(header: string): {
+  days: string | null;
+  startTime: string | null;
+  endTime: string | null;
+} {
+  const days = DAY_RULES.find(([re]) => re.test(header))?.[1] ?? null;
+  const m = header.match(RE_TIME_RANGE);
+  return {
+    days,
+    startTime: m ? to24h(m[1], m[2], m[3]) : null,
+    endTime: m ? to24h(m[4], m[5], m[6]) : null,
+  };
+}
 
 export function parseHtmlRates(htmlRates: string | undefined | null): {
   activeRate: number;
@@ -49,54 +83,24 @@ export function parseHtmlRates(htmlRates: string | undefined | null): {
     if (!header) continue;
     const rateText = (lines[i + 1] || '').trim();
 
+    const { days, startTime, endTime } = parseRateHeader(header);
     const priceMatch = rateText.match(RE_PRICE);
-    const isFree = RE_FREE.test(rateText) || RE_FREE.test(header);
+    const isFreeText = RE_FREE.test(rateText);
 
-    let price = 0;
-    if (priceMatch) {
-      price = parseFloat(priceMatch[1]);
+    if (startTime && endTime && priceMatch) {
+      const price = parseFloat(priceMatch[1]);
       if (price > foundMaxRate) foundMaxRate = price;
+      periods.push({ days: days ?? 'Daily', startTime, endTime, ratePerHour: price, isFree: price === 0 });
+    } else if (startTime && endTime && isFreeText) {
+      periods.push({ days: days ?? 'Daily', startTime, endTime, ratePerHour: 0, isFree: true });
+    } else if (days === 'Sunday' && !startTime && isFreeText) {
+      periods.push({ days: 'Sunday', startTime: '00:00', endTime: '23:59', ratePerHour: 0, isFree: true });
     }
-
-    let days = 'Mon-Fri';
-    const hLower = header.toLowerCase();
-    if (hLower.includes('saturday')) {
-      days = 'Saturday';
-    } else if (hLower.includes('sunday') || hLower.includes('holiday')) {
-      days = 'Sunday';
-    }
-
-    const m = header.match(RE_TIME_RANGE);
-    let startTime = '09:00';
-    let endTime = '18:00';
-    if (m) {
-      let h1 = parseInt(m[1], 10);
-      const min1 = m[2];
-      if (m[3].toUpperCase() === 'PM' && h1 !== 12) h1 += 12;
-      if (m[3].toUpperCase() === 'AM' && h1 === 12) h1 = 0;
-      startTime = `${String(h1).padStart(2, '0')}:${min1}`;
-
-      let h2 = parseInt(m[4], 10);
-      const min2 = m[5];
-      if (m[6].toUpperCase() === 'PM' && h2 !== 12) h2 += 12;
-      if (m[6].toUpperCase() === 'AM' && h2 === 12) h2 = 0;
-      endTime = `${String(h2).padStart(2, '0')}:${min2}`;
-    }
-
-    periods.push({
-      days,
-      startTime,
-      endTime,
-      ratePerHour: price,
-      isFree: isFree || price === 0,
-    });
   }
 
   return {
     activeRate: foundMaxRate,
     isCurrentlyFree: foundMaxRate === 0,
-    periods: periods.length > 0 ? periods : [
-      { days: 'Mon-Sat', startTime: '09:00', endTime: '18:00', ratePerHour: foundMaxRate }
-    ],
+    periods,
   };
 }

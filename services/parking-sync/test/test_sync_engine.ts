@@ -8,6 +8,7 @@ import { MyParkingFetcher } from '../src/fetchers/myparking.ts';
 import { ParkadeFetcher } from '../src/fetchers/parkade.ts';
 import { ImparkFetcher } from '../src/fetchers/impark.ts';
 import { TransitFetcher, IndigoFetcher, PreciseParkLinkFetcher } from '../src/fetchers/transit-and-commercial.ts';
+import { parseHtmlRates, parseRateHeader } from '../src/utils/rate-parser.ts';
 import type { NormalizedParkingRecord } from '../src/types.ts';
 
 console.log('🧪 Starting Comprehensive Parking Sync & Push Engine Tests...\n');
@@ -284,6 +285,34 @@ for (const rec of [...transitRecords, ...imparkRecords, ...parkadeRecords]) {
 }
 
 console.log('  ✔ All 6 provider fetchers produce valid schema with provider_name column.\n');
+
+console.log('--- Test Suite 6: ParkPlus HTML rate parsing ---');
+
+const PARKPLUS_2_HTML = '<b>Mon-Fri 9:00 AM to 11:00 AM</b><br><br>$3.75 per Hour<br><br><b>Mon-Fri 11:00 AM to 1:30 PM</b><br><br>$4.25 per Hour<br><br><b>Mon-Fri 1:30 PM to 3:30 PM</b><br><br>$3.25 per Hour<br><br><b>Mon-Fri 3:30 PM to 6:00 PM</b><br><br>$2.25 per Hour<br><br><b>Saturday: 9:00 AM to 6:00 PM</b><br><br>$1.00 per Hour<br><br><b>Sunday/Holidays:</b><br><br>Free parking<br><br><b>Free parking to 9 AM</b><br><br>See Signs /Parking Restrictions<br><br>';
+const p2 = parseHtmlRates(PARKPLUS_2_HTML);
+assert.deepStrictEqual(p2.periods, [
+  { days: 'Mon-Fri', startTime: '09:00', endTime: '11:00', ratePerHour: 3.75, isFree: false },
+  { days: 'Mon-Fri', startTime: '11:00', endTime: '13:30', ratePerHour: 4.25, isFree: false },
+  { days: 'Mon-Fri', startTime: '13:30', endTime: '15:30', ratePerHour: 3.25, isFree: false },
+  { days: 'Mon-Fri', startTime: '15:30', endTime: '18:00', ratePerHour: 2.25, isFree: false },
+  { days: 'Saturday', startTime: '09:00', endTime: '18:00', ratePerHour: 1, isFree: false },
+  { days: 'Sunday', startTime: '00:00', endTime: '23:59', ratePerHour: 0, isFree: true },
+]);
+assert.strictEqual(p2.activeRate, 4.25);
+
+assert.deepStrictEqual(parseRateHeader('Mon-Sat 9:00 AM to 6:00 PM'), { days: 'Mon-Sat', startTime: '09:00', endTime: '18:00' });
+assert.deepStrictEqual(parseRateHeader('Weekdays: 09:00 to 15:00'), { days: 'Mon-Fri', startTime: '09:00', endTime: '15:00' });
+assert.deepStrictEqual(parseRateHeader('Sun 9:00 AM to 6:00 PM'), { days: 'Sunday', startTime: '09:00', endTime: '18:00' });
+assert.deepStrictEqual(parseRateHeader('Fri 9:00 AM to 6:00 PM'), { days: 'Fri', startTime: '09:00', endTime: '18:00' });
+assert.deepStrictEqual(parseRateHeader('Mon-Thu 9:00 AM to 6:00 PM'), { days: 'Mon-Thu', startTime: '09:00', endTime: '18:00' });
+assert.deepStrictEqual(parseRateHeader('Saturday: Max 9 Hours'), { days: 'Saturday', startTime: null, endTime: null });
+assert.deepStrictEqual(parseRateHeader('Mon-Sun 9:00 to 18:00'), { days: 'Daily', startTime: '09:00', endTime: '18:00' });
+
+const loadingOnly = parseHtmlRates('<b>Loading zone:</b><br><br>Commercial vehicles 30 min<br><br>');
+assert.deepStrictEqual(loadingOnly.periods, []);
+assert.strictEqual(loadingOnly.activeRate, 0);
+
+console.log('  ✔ ParkPlus headers parse days/times; non-rate pairs are dropped.\n');
 
 localDb.close();
 console.log('🎉 ALL SYNC & PUSH ENGINE TESTS PASSED CLEANLY!\n');
